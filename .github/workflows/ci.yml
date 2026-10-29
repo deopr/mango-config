@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GTK4, PyGObject and test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-gi gir1.2-gtk-4.0 xvfb shellcheck
+
+      - name: Syntax check
+        run: python3 -m py_compile mango-config scripts/migrate_dms.py tests/test_discovery.py tests/test_apply.py
+
+      - name: Config discovery
+        run: python3 tests/test_discovery.py
+
+      - name: GUI apply round-trip
+        run: xvfb-run -a python3 tests/test_apply.py
+
+      - name: Installer
+        run: bash tests/test_install.sh
+
+      - name: Shellcheck
+        run: shellcheck scripts/install.sh tests/test_install.sh

@@ -1,0 +1,2110 @@
+#!/usr/bin/env python3
+# mango-config — a friendly GTK4 settings app for the Mango Wayland compositor.
+# Edits only the files your config.conf actually sources, validates with
+# `mango -p`, keeps timestamped backups, and reloads through Mango's IPC socket.
+import argparse
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Gdk", "4.0")
+gi.require_version("Pango", "1.0")
+from gi.repository import Gdk, GLib, Gtk, Pango
+
+VERSION = "0.1.0"
+APP_ID = "io.github.deopr.MangoConfig"
+
+DEFAULT_CONFIG_DIR = os.path.abspath(os.path.expanduser(
+    os.environ.get("MANGO_CONFIG_DIR") or "~/.config/mango"))
+
+# Filled in by configure_profile() before the UI is built.
+CONFIG_DIR = DEFAULT_CONFIG_DIR
+LAYOUT = None
+NOCTALIA = None
+COLORS = None
+INPUT = None
+CURSOR = None
+OUTPUTS = None
+WINDOWRULES = None
+BINDS = None
+PROFILE = None
+
+ROLE_KEYS = {
+    "layout": {
+        "border_radius", "border_px",
+        "gap_inner_horizontal", "gap_inner_vertical",
+        "gap_outer_horizontal", "gap_outer_vertical",
+        "smart_gaps", "no_radius_when_single",
+    },
+    "input": {
+        "mouse_accel_speed", "mouse_natural_scrolling", "mouse_left_handed",
+        "mouse_middle_button_emulation", "axis_scroll_factor",
+        "tap_to_click", "tap_and_drag", "drag_lock",
+        "trackpad_accel_speed", "trackpad_natural_scrolling",
+        "trackpad_scroll_factor", "trackpad_disable_while_typing",
+        "trackpad_middle_button_emulation", "trackpad_send_events_mode",
+    },
+    "cursor": {"cursor_size", "cursor_theme"},
+    "outputs": {"monitor_rule"},
+    "rules": {"window_rule"},
+}
+
+FLAT_NAMES = {
+    "layout": ["layout.conf"],
+    "input": ["input.conf"],
+    "cursor": ["cursor.conf"],
+    "outputs": ["outputs.conf"],
+    "rules": ["windowrules.conf", "window_rule.conf", "rules.conf"],
+    "binds": ["binds.conf", "bind.conf", "binds-light.conf"],
+    "colors": ["colors.conf", "theme.conf"],
+    "theme": ["theme.conf", "noctalia.conf", "colors.conf"],
+}
+
+
+def shortpath(path):
+    if not path:
+        return "not found"
+    return path.replace(os.path.expanduser("~"), "~")
+
+
+def _expand_source(value, config_dir):
+    v = value.strip().strip('"').strip("'")
+    home = os.path.expanduser("~")
+    v = v.replace("${HOME}", home).replace("$HOME", home)
+    if v.startswith("~"):
+        v = os.path.expanduser(v)
+    elif v.startswith("./"):
+        v = os.path.join(config_dir, v[2:])
+    elif not os.path.isabs(v):
+        guess = os.path.join(config_dir, v)
+        v = guess if os.path.exists(guess) else v
+    return os.path.normpath(v)
+
+
+def _file_keys(path):
+    keys = []
+    for line in read_lines(path):
+        st = line.strip()
+        if not st or st.startswith("#") or st.startswith("["):
+            continue
+        m = KEY_RE.match(st)
+        if m:
+            keys.append(m.group(1))
+    return keys
+
+
+class Profile:
+    def __init__(self, config_dir):
+        self.dir = config_dir
+        self.main = os.path.join(config_dir, "config.conf")
+        self.toml = os.path.join(config_dir, "config.toml")
+        self.files = []
+        self.paths = {role: None for role in
+                      ("layout", "input", "cursor", "outputs", "rules", "binds",
+                       "colors", "theme")}
+        self.dms = False
+        self.error = ""
+        self.warnings = []
+
+    def path(self, role):
+        return self.paths.get(role)
+
+
+def _collect_included_files(profile):
+    seen = set()
+    ordered = []
+
+    def visit(path):
+        real = os.path.realpath(path)
+        if real in seen or not os.path.isfile(path):
+            return
+        seen.add(real)
+        ordered.append(path)
+        if path.lower().endswith(".toml"):
+            return
+        for line in read_lines(path):
+            st = line.strip()
+            if not st or st.startswith("#"):
+                continue
+            m = re.match(r"^(source_optional|source)\s*=\s*(.+)$", st)
+            if not m:
+                continue
+            raw = m.group(2).strip()
+            if "$" in raw and "$HOME" not in raw and "${HOME}" not in raw:
+                profile.warnings.append("Skipped source with unresolved variable: " + raw)
+                continue
+            visit(_expand_source(raw, profile.dir))
+
+    if os.path.isfile(profile.main):
+        visit(profile.main)
+    profile.files = ordered
+
+
+def discover_profile(config_dir):
+    profile = Profile(config_dir)
+    if not os.path.isfile(profile.main):
+        if os.path.isfile(profile.toml):
+            profile.error = ("Mango is using config.toml, which this version does not "
+                             "edit yet. Use config.conf or convert the TOML file.")
+        else:
+            profile.error = "No config.conf found in " + shortpath(config_dir)
+        return profile
+
+    _collect_included_files(profile)
+    key_map = {p: _file_keys(p) for p in profile.files}
+
+    for role in ("layout", "input", "cursor", "outputs", "rules", "binds"):
+        scored = []
+        for idx, path in enumerate(profile.files):
+            keys = key_map.get(path, [])
+            if role == "binds":
+                n = sum(1 for k in keys if k.lower().startswith("bind"))
+            else:
+                n = sum(1 for k in keys if k in ROLE_KEYS[role])
+            if n:
+                scored.append((n, idx, path))
+        if scored:
+            scored.sort(key=lambda t: (t[0], t[1]))
+            profile.paths[role] = scored[-1][2]
+        else:
+            for name in FLAT_NAMES[role]:
+                cand = os.path.join(profile.dir, name)
+                if cand in profile.files:
+                    profile.paths[role] = cand
+                    break
+
+    base_keys = {"border_color", "focus_color", "urgent_color"}
+    base_scored = []
+    for idx, path in enumerate(profile.files):
+        n = sum(1 for k in key_map.get(path, []) if k in base_keys)
+        if n:
+            base_scored.append((n, idx, path))
+    if base_scored:
+        base_scored.sort(key=lambda t: (t[0], t[1]))
+        profile.paths["colors"] = base_scored[-1][2]
+    else:
+        for name in FLAT_NAMES["colors"]:
+            cand = os.path.join(profile.dir, name)
+            if cand in profile.files:
+                profile.paths["colors"] = cand
+                break
+
+    theme_scored = []
+    for idx, path in enumerate(profile.files):
+        keys = key_map.get(path, [])
+        n = sum(1 for k in keys if k.endswith("_color") and k not in base_keys)
+        if n:
+            priority = 1 if re.search(r"theme|noctalia|color", os.path.basename(path), re.I) else 0
+            theme_scored.append((n, priority, idx, path))
+    if theme_scored:
+        theme_scored.sort(key=lambda t: (t[0], t[1], t[2]))
+        profile.paths["theme"] = theme_scored[-1][3]
+    else:
+        for name in FLAT_NAMES["theme"]:
+            cand = os.path.join(profile.dir, name)
+            if cand in profile.files:
+                profile.paths["theme"] = cand
+                break
+
+    dms_prefix = os.path.join(profile.dir, "dms") + os.sep
+    profile.dms = any(p and p.startswith(dms_prefix) for p in profile.paths.values())
+    return profile
+
+
+def configure_profile(profile):
+    global CONFIG_DIR, LAYOUT, NOCTALIA, COLORS, INPUT, CURSOR, OUTPUTS, WINDOWRULES, BINDS, PROFILE
+    PROFILE = profile
+    CONFIG_DIR = profile.dir
+    LAYOUT = profile.paths.get("layout")
+    NOCTALIA = profile.paths.get("theme")
+    COLORS = profile.paths.get("colors")
+    INPUT = profile.paths.get("input")
+    CURSOR = profile.paths.get("cursor")
+    OUTPUTS = profile.paths.get("outputs")
+    WINDOWRULES = profile.paths.get("rules")
+    BINDS = profile.paths.get("binds")
+
+
+def read_lines(path):
+    if not path:
+        return []
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.readlines()
+    except FileNotFoundError:
+        return []
+
+
+def write_lines(path, lines):
+    if not path:
+        return
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.writelines(lines)
+
+
+KEY_RE = re.compile(r"^([A-Za-z0-9_]+)\s*=\s*(.*)$")
+
+
+def set_simple(lines, key, new_value, sep="="):
+    out, replaced = [], False
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            out.append(line)
+            continue
+        m = KEY_RE.match(stripped)
+        if m and m.group(1) == key:
+            lead = line[: len(line) - len(line.lstrip())]
+            trail = ""
+            out.append(f"{lead}{key}{sep}{new_value}{trail}\n")
+            replaced = True
+        else:
+            out.append(line)
+    if not replaced:
+        out.append(f"{key}{sep}{new_value}\n")
+    return out
+
+
+def key_sep(lines, key, default="="):
+    pat = re.compile(r"^\s*" + re.escape(key) + r"(\s*=\s*)")
+    for line in lines:
+        m = pat.match(line)
+        if m:
+            return m.group(1)
+    return default
+
+
+def fmt_float(v):
+    text = ("%.2f" % float(v)).rstrip("0").rstrip(".")
+    return text if text not in ("", "-") else "0"
+
+
+def get_simple(lines, key, default=None):
+    for line in lines:
+        m = KEY_RE.match(line.strip())
+        if m and m.group(1) == key:
+            return m.group(2).strip()
+    return default
+
+
+def parse_kv(value):
+    d = {}
+    for part in value.split(","):
+        part = part.strip()
+        if ":" in part:
+            k, v = part.split(":", 1)
+            d[k.strip()] = v.strip()
+    return d
+
+
+def build_kv(d, order):
+    return ",".join(f"{k}:{d.get(k, '')}" for k in order if k in d)
+
+
+def set_kv_line(lines, prefix, new_dict, order):
+    out, replaced = [], False
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            out.append(line)
+            continue
+        if stripped.startswith(prefix + "="):
+            old = stripped[len(prefix) + 1:]
+            merged = parse_kv(old)
+            merged.update(new_dict)
+            lead = line[: len(line) - len(line.lstrip())]
+            trail = ""
+            out.append(f"{lead}{prefix}={build_kv(merged, order)}{trail}\n")
+            replaced = True
+        else:
+            out.append(line)
+    if not replaced:
+        out.append(f"{prefix}={build_kv(new_dict, order)}\n")
+    return out
+
+
+def hex_to_rgba(h):
+    h = (h or "").strip()
+    if h.lower().startswith("0x"):
+        h = h[2:]
+    elif h.startswith("#"):
+        h = h[1:]
+    if len(h) == 6:
+        h = h + "ff"
+    h = "#" + h
+    rgba = Gdk.RGBA()
+    rgba.parse(h)
+    return rgba
+
+
+def rgba_to_hex(rgba):
+    return "0x%02x%02x%02x%02x" % (int(rgba.red * 255), int(rgba.green * 255),
+                                  int(rgba.blue * 255), int(rgba.alpha * 255))
+
+
+def rgba_display(rgba):
+    r = int(round(rgba.red * 255))
+    g = int(round(rgba.green * 255))
+    b = int(round(rgba.blue * 255))
+    a = int(round(rgba.alpha * 255))
+    if a >= 255:
+        return "#%02X%02X%02X" % (r, g, b)
+    return "#%02X%02X%02X%02X" % (r, g, b, a)
+
+
+def discover_cursor_themes():
+    themes = []
+    seen = set()
+    dirs = [
+        os.path.expanduser("~/.icons"),
+        os.path.expanduser("~/.local/share/icons"),
+        "/usr/share/icons",
+        "/usr/local/share/icons",
+    ]
+    for d in dirs:
+        if not os.path.isdir(d):
+            continue
+        try:
+            names = sorted(os.listdir(d))
+        except Exception:
+            continue
+        for name in names:
+            if name in seen:
+                continue
+            p = os.path.join(d, name)
+            if not os.path.isdir(p):
+                continue
+            if os.path.isdir(os.path.join(p, "cursors")) or os.path.isfile(os.path.join(p, "cursor.theme")):
+                seen.add(name)
+                themes.append(name)
+    return themes
+
+
+class Row(Gtk.Box):
+    def __init__(self, label, widget):
+        super().__init__(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.set_margin_top(6)
+        self.set_margin_bottom(6)
+        self.set_hexpand(True)
+        self.set_valign(Gtk.Align.CENTER)
+        lbl = Gtk.Label(label=label)
+        lbl.set_halign(Gtk.Align.START)
+        lbl.set_hexpand(True)
+        lbl.set_xalign(0)
+        self.append(lbl)
+        widget.set_hexpand(False)
+        widget.set_halign(Gtk.Align.END)
+        self.append(widget)
+
+
+class Section(Gtk.Box):
+    def __init__(self, title):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        self.set_margin_top(10)
+        self.set_margin_start(12)
+        self.set_margin_end(12)
+        self.set_margin_bottom(6)
+        lbl = Gtk.Label(label=title)
+        lbl.add_css_class("title")
+        lbl.set_halign(Gtk.Align.START)
+        self.append(lbl)
+        self.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.box.set_hexpand(True)
+        self.append(self.box)
+
+    def add_row(self, label, widget):
+        self.box.append(Row(label, widget))
+
+
+class App(Gtk.Application):
+    def __init__(self, profile=None, tab=None, no_reload=False):
+        super().__init__(application_id=APP_ID)
+        self.profile = profile
+        self.tab = tab
+        self.no_reload = no_reload
+        self.controls = []
+        self._outputs_fields = {}
+        self._outputs_order = []
+        self.wr_rows = []
+        self.wr_box = None
+        self.kb_rows = []
+        self.kb_box = None
+        self._dropdown_themes = {}
+        self.win = None
+        self._guard_src = None
+        self._guard_old = None
+        self._guard_left = 0
+
+    def _spin(self, value, lo, hi, step):
+        adj = Gtk.Adjustment.new(value, lo, hi, step, step * 10, 0)
+        sb = Gtk.SpinButton.new(adj, step, 0)
+        sb.set_digits(0 if float(step).is_integer() else 2)
+        return sb
+
+    def _switch(self, state):
+        sw = Gtk.Switch.new()
+        sw.set_state(bool(state))
+        return sw
+
+    def _entry(self, text):
+        e = Gtk.Entry.new()
+        e.set_text(text or "")
+        return e
+
+    def _color(self, hexstr):
+        btn = Gtk.ColorDialogButton.new()
+        btn.set_dialog(Gtk.ColorDialog.new())
+        try:
+            btn.set_rgba(hex_to_rgba(hexstr))
+        except Exception:
+            pass
+        return btn
+
+    def field(self, widget, kind, path, key, order=None, index=None):
+        self.controls.append({"widget": widget, "kind": kind, "path": path, "key": key,
+                              "order": order, "index": index})
+
+    def do_activate(self):
+        win = Gtk.ApplicationWindow(application=self)
+        self.win = win
+        win.set_title("Mango Config")
+        scr = None
+        try:
+            from gi.repository import Gdk as _Gdk
+            _d = _Gdk.Display.get_default()
+            if _d is not None:
+                scr = _d.get_default_screen()
+        except Exception:
+            scr = None
+        geo = scr.get_monitor_geometry(0) if scr is not None else None
+        if geo is not None:
+            w = max(640, int(geo.width * 0.92))
+            h = max(480, int(geo.height * 0.78))
+            win.set_default_size(min(w, 1440), min(h, 1000))
+        else:
+            win.set_default_size(920, 840)
+        stack = Gtk.Stack()
+        stack.set_hexpand(True)
+        stack.set_vexpand(True)
+        stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        stack.set_transition_duration(120)
+
+        side = Gtk.ListBox()
+        side.add_css_class("nav-sidebar")
+        side.set_selection_mode(Gtk.SelectionMode.SINGLE)
+
+        sections = [
+            ("Appearance", [
+                ("Layout & gaps", "layout", self.b_layout, "preferences-desktop-theme", LAYOUT,
+                 "Gaps, borders and corner rounding for the tiling layout."),
+                ("Theme colors", "theme", self.b_noctalia, "applications-graphics", NOCTALIA,
+                 "Extended colors from your theme — click a swatch to pick a new one."),
+                ("Base colors", "colors", self.b_colors, "preferences-desktop-font", COLORS,
+                 "Border, focus and urgent colors from the file that takes effect."),
+                ("Cursor", "cursor", self.b_cursor, "input-mouse", CURSOR,
+                 "Cursor theme and size for Wayland clients."),
+            ]),
+            ("Input", [
+                ("Mouse", "mouse", self.b_input_mouse, "input-mouse", INPUT,
+                 "Pointer speed, acceleration and natural scrolling."),
+                ("Touchpad", "touchpad", self.b_input_touchpad, "input-touchpad", INPUT,
+                 "Tap to click, scroll direction and gesture behavior."),
+                ("Keybinds", "keys", self.b_keybinds, "preferences-desktop-keyboard", BINDS,
+                 "All binds found in your config. Search, then edit only what you need."),
+            ]),
+            ("Display", [
+                ("Outputs", "outputs", self.b_outputs, "video-display", OUTPUTS,
+                 "Monitor rules: resolution, refresh, scale, position, transform and VRR."),
+            ]),
+            ("Behavior", [
+                ("Window rules", "rules", self.b_windowrules, "preferences-system-windows", WINDOWRULES,
+                 "Per-app rules — floating and other matching behavior."),
+            ]),
+        ]
+
+        pid_rows = {}
+        for cat, items in sections:
+            hdr = Gtk.Label(label=cat.upper())
+            hdr.add_css_class("nav-cat")
+            hdr.set_xalign(0)
+            row_h = Gtk.ListBoxRow()
+            row_h.set_selectable(False)
+            row_h.set_activatable(False)
+            row_h.set_child(hdr)
+            side.append(row_h)
+            for title, pid, build, icon, path, desc in items:
+                stack.add_named(self._wrap_page(title, desc, path, build()), pid)
+                hb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+                hb.append(Gtk.Image.new_from_icon_name(icon))
+                lbl = Gtk.Label(label=title)
+                lbl.set_xalign(0)
+                hb.append(lbl)
+                r = Gtk.ListBoxRow()
+                r.set_child(hb)
+                r._pid = pid
+                side.append(r)
+                pid_rows[pid] = r
+
+        def on_nav(_lb, r):
+            if r is not None and getattr(r, "_pid", None):
+                stack.set_visible_child_name(r._pid)
+
+        side.connect("row-selected", on_nav)
+
+        want = (self.tab or os.environ.get("MANGO_CONFIG_TAB", "")).strip().lower()
+        chosen = pid_rows.get(want) if want else None
+        if chosen is None:
+            chosen = next(iter(pid_rows.values()))
+        side.select_row(chosen)
+        stack.set_visible_child_name(chosen._pid)
+
+        nav_scroll = Gtk.ScrolledWindow()
+        nav_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        nav_scroll.set_child(side)
+        nav_scroll.set_vexpand(True)
+
+        side_col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        side_col.set_size_request(196, -1)
+        side_col.append(nav_scroll)
+        open_btn = Gtk.Button(label="Open config folder")
+        open_btn.add_css_class("flat")
+        open_btn.set_tooltip_text(CONFIG_DIR)
+        open_btn.set_margin_top(4)
+        open_btn.set_margin_start(8)
+        open_btn.set_margin_end(8)
+        open_btn.set_margin_bottom(8)
+        open_btn.connect("clicked", lambda _b: subprocess.Popen(["xdg-open", CONFIG_DIR]))
+        side_col.append(open_btn)
+
+        body = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        body.set_vexpand(True)
+        body.append(side_col)
+        body.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
+        body.append(stack)
+
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        bar.set_margin_top(10)
+        bar.set_margin_start(12)
+        bar.set_margin_end(12)
+        bar.set_margin_bottom(10)
+        self.status = Gtk.Label(label="")
+        self.status.set_hexpand(True)
+        self.status.set_xalign(1)
+        ab = Gtk.Button(label="Apply & reload Mango")
+        ab.add_css_class("suggested-action")
+        ab.connect("clicked", self.on_apply)
+        rb = Gtk.Button(label="Discard / reload from disk")
+        rb.connect("clicked", self.b_reset)
+        bar.append(rb)
+        bar.append(ab)
+        bar.append(self.status)
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        problem = (PROFILE.error if PROFILE is not None and PROFILE.error else
+                   (f"Config directory not found: {CONFIG_DIR}"
+                    if not os.path.isdir(CONFIG_DIR) else ""))
+        if problem:
+            warn = Gtk.Label(label=problem)
+            warn.add_css_class("warn-banner")
+            warn.set_xalign(0)
+            warn.set_wrap(True)
+            root.append(warn)
+            ab.set_sensitive(False)
+            rb.set_sensitive(False)
+        self.apply_btn = ab
+        self.guard_revealer = Gtk.Revealer()
+        self.guard_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        gbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        gbox.add_css_class("guard-banner")
+        gicon = Gtk.Image.new_from_icon_name("dialog-warning-symbolic")
+        gicon.set_valign(Gtk.Align.CENTER)
+        gtext = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        gtext.set_hexpand(True)
+        gtitle = Gtk.Label(label="Keep this display setup?")
+        gtitle.set_xalign(0)
+        gtitle.add_css_class("bind-combo")
+        self.guard_label = Gtk.Label(label="Reverting to the previous settings in 10s…")
+        self.guard_label.set_xalign(0)
+        self.guard_label.add_css_class("dim-label")
+        gtext.append(gtitle)
+        gtext.append(self.guard_label)
+        self.guard_revert = Gtk.Button(label="Revert now")
+        self.guard_keep = Gtk.Button(label="Keep settings")
+        self.guard_keep.add_css_class("suggested-action")
+        self.guard_revert.connect("clicked", lambda _b: self._guard_finish(True))
+        self.guard_keep.connect("clicked", lambda _b: self._guard_finish(False))
+        gbox.append(gicon)
+        gbox.append(gtext)
+        gbox.append(self.guard_revert)
+        gbox.append(self.guard_keep)
+        self.guard_revealer.set_child(gbox)
+        root.append(self.guard_revealer)
+        root.append(body)
+        root.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+        root.append(bar)
+        win.set_child(root)
+        win.connect("close-request", self._on_close_request)
+        self._install_css()
+        win.present()
+        self.load_all()
+
+    def _empty_page(self, message):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        box.set_margin_top(24)
+        box.set_margin_start(16)
+        box.set_margin_end(16)
+        lbl = Gtk.Label(label=message)
+        lbl.add_css_class("dim-label")
+        lbl.set_xalign(0)
+        lbl.set_wrap(True)
+        box.append(lbl)
+        return box
+
+    def _wrap_page(self, title, subtitle, path, child):
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        header.set_margin_top(12)
+        header.set_margin_start(14)
+        header.set_margin_end(14)
+        header.set_margin_bottom(6)
+        t = Gtk.Label(label=title)
+        t.add_css_class("page-title")
+        t.set_xalign(0)
+        d = Gtk.Label(label=subtitle)
+        d.add_css_class("dim-label")
+        d.set_xalign(0)
+        d.set_wrap(True)
+        p = Gtk.Label(label=shortpath(path))
+        p.add_css_class("page-path")
+        p.set_xalign(0)
+        header.append(t)
+        header.append(d)
+        header.append(p)
+        if not isinstance(child, Gtk.ScrolledWindow):
+            sc = Gtk.ScrolledWindow()
+            sc.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            sc.set_child(child)
+            child = sc
+        child.set_hexpand(True)
+        child.set_vexpand(True)
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        page.append(header)
+        page.append(child)
+        return page
+
+    def _install_css(self):
+        try:
+            css = Gtk.CssProvider()
+            css.load_from_data(b"""
+            .bind-row {
+                background: alpha(currentColor, 0.05);
+                border-radius: 8px;
+                padding: 2px 8px;
+            }
+            .bind-row:hover { background: alpha(currentColor, 0.09); }
+            .bind-row button { min-height: 22px; padding: 1px 8px; }
+            .bind-combo { font-weight: 600; }
+            .kb-cat {
+                font-size: 1.02em;
+                font-weight: 800;
+                letter-spacing: 0.4px;
+                margin-top: 16px;
+                margin-bottom: 4px;
+                opacity: 0.9;
+            }
+            .kb-group > title { font-size: 1.04em; font-weight: 700; padding: 7px 2px; }
+            .kb-row { padding: 7px 10px; border-radius: 9px; }
+            .kb-row:hover { background: alpha(currentColor, 0.06); }
+            .kb-row button { min-height: 26px; padding: 2px 6px; }
+            .kb-action { opacity: 0.85; }
+            .keycap {
+                background: alpha(currentColor, 0.10);
+                border-radius: 6px;
+                padding: 2px 8px;
+                font-weight: 700;
+                font-size: 0.95em;
+            }
+            .color-card { padding: 2px; }
+            .color-swatch { min-height: 46px; border-radius: 10px; }
+            .color-name { font-weight: 700; font-size: 0.95em; }
+            .color-hex { font-family: monospace; font-size: 0.82em; opacity: 0.55; }
+            .color-group {
+                font-size: 0.78em;
+                font-weight: 800;
+                letter-spacing: 1px;
+                opacity: 0.55;
+                margin: 10px 2px 2px 2px;
+            }
+            .nav-sidebar { background: alpha(currentColor, 0.03); padding: 6px; }
+            .nav-sidebar row { border-radius: 9px; padding: 4px 8px; }
+            .nav-sidebar row:hover { background: alpha(currentColor, 0.07); }
+            .nav-sidebar row:selected { background: alpha(currentColor, 0.15); }
+            .nav-cat {
+                font-size: 0.76em;
+                font-weight: 800;
+                letter-spacing: 0.9px;
+                opacity: 0.55;
+                margin: 10px 6px 2px 6px;
+            }
+            .page-title { font-size: 1.4em; font-weight: 800; }
+            .page-path { font-family: monospace; font-size: 0.8em; opacity: 0.5; }
+            .mono-raw { font-family: monospace; font-size: 0.85em; opacity: 0.75; }
+            .warn-banner {
+                background: alpha(#f5c211, 0.18);
+                border-radius: 8px;
+                padding: 8px 12px;
+                margin: 8px;
+            }
+            .guard-window {
+                background: @theme_bg_color;
+                border: 1px solid alpha(currentColor, 0.18);
+                border-radius: 12px;
+            }
+            .guard-count {
+                font-size: 3.2em;
+                font-weight: 800;
+            }
+            .guard-banner {
+                background: alpha(#f5c211, 0.16);
+                border: 1px solid alpha(#f5c211, 0.35);
+                border-radius: 8px;
+                padding: 6px 10px;
+                margin: 8px 8px 0 8px;
+            }
+            """)
+            disp = Gdk.Display.get_default()
+            if disp is not None:
+                Gtk.StyleContext.add_provider_for_display(
+                    disp, css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        except Exception:
+            pass
+
+    # ---- builders
+
+    def b_layout(self):
+        specs = [
+            ("Border radius", "border_radius", 0, 128, "int", LAYOUT),
+            ("Border width (px)", "border_px", 0, 32, "int", LAYOUT),
+            ("Inner gap (h)", "gap_inner_horizontal", 0, 128, "int", LAYOUT),
+            ("Inner gap (v)", "gap_inner_vertical", 0, 128, "int", LAYOUT),
+            ("Outer gap (h)", "gap_outer_horizontal", 0, 128, "int", LAYOUT),
+            ("Outer gap (v)", "gap_outer_vertical", 0, 128, "int", LAYOUT),
+        ]
+        if not LAYOUT or not os.path.isfile(LAYOUT):
+            return self._empty_page("No layout file found. Add layout settings to config.conf or source a layout file from it.")
+        lines = read_lines(LAYOUT)
+        if not any(get_simple(lines, key) is not None for _l, key, *_r in specs):
+            return self._empty_page("No layout settings found in " + shortpath(LAYOUT) + ".")
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        page.set_hexpand(True)
+        page.set_vexpand(True)
+        s = Section("Spacing & borders")
+        for label, key, lo, hi, kind, path in specs:
+            sb = self._spin(float(get_simple(lines, key, 0)), lo, hi, 1)
+            s.add_row(label, sb)
+            self.field(sb, kind, path, key)
+        page.append(s)
+        raw = Gtk.Expander(label="Raw configuration")
+        raw.set_expanded(False)
+        preview = Gtk.Label(label="\n".join(l.strip() for l in lines if l.strip() and not l.strip().startswith("#")))
+        preview.add_css_class("mono-raw")
+        preview.set_wrap(True)
+        preview.set_xalign(0)
+        preview.set_selectable(True)
+        preview.set_margin_top(6)
+        raw.set_child(preview)
+        page.append(raw)
+        return page
+
+    def _color_card(self, title, key, path, lines, desc=None):
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        card.add_css_class("color-card")
+        btn = self._color(get_simple(lines, key))
+        btn.add_css_class("color-swatch")
+        btn.set_tooltip_text(key)
+        btn.set_size_request(-1, 46)
+        hexlbl = Gtk.Label()
+        hexlbl.add_css_class("color-hex")
+        hexlbl.set_xalign(0)
+
+        def update(*_a):
+            try:
+                hexlbl.set_text(rgba_display(btn.get_rgba()))
+            except Exception:
+                hexlbl.set_text("")
+        btn.connect("notify::rgba", update)
+        update()
+
+        name = Gtk.Label(label=title)
+        name.add_css_class("color-name")
+        name.set_xalign(0)
+        name.set_ellipsize(Pango.EllipsizeMode.END)
+        name.set_tooltip_text(title)
+        card.append(btn)
+        card.append(name)
+        if desc:
+            d = Gtk.Label(label=desc)
+            d.add_css_class("dim-label")
+            d.set_xalign(0)
+            d.set_wrap(True)
+            card.append(d)
+        card.append(hexlbl)
+        self.field(btn, "color", path, key)
+        return card
+
+    def _color_flow(self, max_per_line=4):
+        flow = Gtk.FlowBox()
+        flow.set_selection_mode(Gtk.SelectionMode.NONE)
+        flow.set_max_children_per_line(max_per_line)
+        flow.set_min_children_per_line(1)
+        flow.set_column_spacing(10)
+        flow.set_row_spacing(10)
+        flow.set_homogeneous(True)
+        flow.set_valign(Gtk.Align.START)
+        return flow
+
+    def _color_group_label(self, title):
+        lbl = Gtk.Label(label=title.upper())
+        lbl.add_css_class("color-group")
+        lbl.set_xalign(0)
+        return lbl
+
+    def b_noctalia(self):
+        if not NOCTALIA or not os.path.isfile(NOCTALIA):
+            return self._empty_page("No extended theme colors found. Add a theme file to config.conf to edit its palette here.")
+        page = Gtk.ScrolledWindow()
+        page.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        box.set_margin_top(10); box.set_margin_start(12); box.set_margin_end(12); box.set_margin_bottom(10)
+        box.set_hexpand(True)
+        page.set_child(box)
+        lines = read_lines(NOCTALIA)
+
+        order = [
+            ("Surfaces", ["root_color", "split_color", "maximized_screen_color",
+                          "global_color", "overlay_color", "scratchpad_color"]),
+            ("Accents", ["border_color", "focus_color", "urgent_color", "drop_color"]),
+            ("Jump labels", ["jump_label_decorate_fg_color", "jump_label_decorate_bg_color",
+                             "jump_label_decorate_focus_fg_color", "jump_label_decorate_focus_bg_color",
+                             "jump_label_decorate_border_color"]),
+            ("Group bar", ["group_bar_decorate_fg_color", "group_bar_decorate_bg_color",
+                           "group_bar_decorate_focus_fg_color", "group_bar_decorate_focus_bg_color",
+                           "group_bar_decorate_border_color"]),
+        ]
+        labels = {
+            "root_color": "Root", "split_color": "Split", "maximized_screen_color": "Maximized screen",
+            "global_color": "Global", "overlay_color": "Overlay", "scratchpad_color": "Scratchpad",
+            "border_color": "Border", "focus_color": "Focus", "urgent_color": "Urgent", "drop_color": "Drop",
+            "jump_label_decorate_fg_color": "Decor fg", "jump_label_decorate_bg_color": "Decor bg",
+            "jump_label_decorate_focus_fg_color": "Focus fg", "jump_label_decorate_focus_bg_color": "Focus bg",
+            "jump_label_decorate_border_color": "Border",
+            "group_bar_decorate_fg_color": "Decor fg", "group_bar_decorate_bg_color": "Decor bg",
+            "group_bar_decorate_focus_fg_color": "Focus fg", "group_bar_decorate_focus_bg_color": "Focus bg",
+            "group_bar_decorate_border_color": "Border",
+        }
+
+        found = []
+        for raw in lines:
+            st = raw.strip()
+            if st.startswith("#") or "=" not in st:
+                continue
+            k = st.split("=", 1)[0].strip()
+            if k.endswith("_color"):
+                found.append(k)
+        if not found:
+            return self._empty_page("No extended theme colors found in " + shortpath(NOCTALIA) + ".")
+
+        grouped = {g: [] for g, _ in order}
+        other = []
+        for k in found:
+            for g, keys in order:
+                if k in keys:
+                    grouped[g].append(k)
+                    break
+            else:
+                other.append(k)
+
+        for g, _keys in order:
+            if not grouped[g]:
+                continue
+            box.append(self._color_group_label(g))
+            flow = self._color_flow()
+            for k in grouped[g]:
+                title = labels.get(k, k[:-6].replace("_", " ").capitalize())
+                flow.append(self._color_card(title, k, NOCTALIA, lines))
+            box.append(flow)
+        if other:
+            box.append(self._color_group_label("Other"))
+            flow = self._color_flow()
+            for k in other:
+                flow.append(self._color_card(k[:-6].replace("_", " ").capitalize(), k, NOCTALIA, lines))
+            box.append(flow)
+        box.append(Gtk.Box(hexpand=True))
+        return page
+
+    def b_colors(self):
+        if not COLORS or not os.path.isfile(COLORS):
+            return self._empty_page("No base color file found. Add border, focus and urgent colors to a file sourced by config.conf.")
+        lines = read_lines(COLORS)
+        specs = [
+            ("Border", "border_color", "Outline around every window."),
+            ("Focus", "focus_color", "Border of the focused window."),
+            ("Urgent", "urgent_color", "Windows demanding attention."),
+        ]
+        present = [(l, k, d) for l, k, d in specs if get_simple(lines, k) is not None]
+        if not present:
+            return self._empty_page("No border, focus or urgent colors found in " + shortpath(COLORS) + ".")
+        page = Gtk.ScrolledWindow()
+        page.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        box.set_margin_top(10); box.set_margin_start(12); box.set_margin_end(12); box.set_margin_bottom(10)
+        box.set_hexpand(True)
+        page.set_child(box)
+        s = Section("Base colors")
+        flow = self._color_flow(3)
+        for label, key, desc in present:
+            flow.append(self._color_card(label, key, COLORS, lines, desc))
+        s.box.append(flow)
+        box.append(s)
+        base_name = os.path.basename(COLORS).lower()
+        if "noctalia" in base_name:
+            note_text = ("These colors come from Noctalia and can be regenerated by it. "
+                         "Edit them here for the current theme, or override them in a later source file.")
+        elif PROFILE is not None and PROFILE.dms and (os.sep + "dms" + os.sep) in COLORS:
+            note_text = ("This file is generated by DMS. Remove its source line in config.conf "
+                         "if you want these colors to become permanent.")
+        else:
+            note_text = "These colors are read from " + shortpath(COLORS) + "."
+        note = Gtk.Label(label=note_text)
+        note.add_css_class("dim-label")
+        note.set_wrap(True)
+        note.set_xalign(0)
+        box.append(note)
+        box.append(Gtk.Box(hexpand=True))
+        return page
+
+    def b_input_mouse(self):
+        mouse_keys = ["mouse_accel_speed", "mouse_natural_scrolling", "mouse_left_handed",
+                      "mouse_middle_button_emulation", "axis_scroll_factor"]
+        if not INPUT or not os.path.isfile(INPUT):
+            return self._empty_page("No input file found. Add mouse settings to config.conf or source an input file from it.")
+        lines = read_lines(INPUT)
+        if not any(get_simple(lines, k) is not None for k in mouse_keys):
+            return self._empty_page("No mouse settings found in " + shortpath(INPUT) + ".")
+        page = Gtk.ScrolledWindow()
+        page.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.set_margin_top(10); box.set_margin_start(12); box.set_margin_end(12); box.set_margin_bottom(10)
+        page.set_child(box)
+        s = Section("Pointer")
+        for label, key, lo, hi, st in [
+            ("Accel speed", "mouse_accel_speed", -2, 2, "float"),
+            ("Natural scrolling", "mouse_natural_scrolling", 0, 1, "switch"),
+            ("Left handed", "mouse_left_handed", 0, 1, "switch"),
+            ("Middle button emulation", "mouse_middle_button_emulation", 0, 1, "switch"),
+            ("Scroll factor", "axis_scroll_factor", 0.1, 3.0, "float"),
+        ]:
+            if st == "float":
+                sb = self._spin(float(get_simple(lines, key, 0)), lo, hi, 0.05)
+                s.add_row(label, sb)
+                self.field(sb, "float", INPUT, key)
+            else:
+                sw = self._switch(get_simple(lines, key, "0") == "1")
+                s.add_row(label, sw)
+                self.field(sw, "switch", INPUT, key)
+        spacer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        spacer.append(s)
+        spacer.append(Gtk.Box(hexpand=True))
+        spacer.set_hexpand(True)
+        spacer.set_vexpand(True)
+        page.set_child(spacer)
+        return page
+
+    def b_input_touchpad(self):
+        fields = [
+            ("Tap to click", "tap_to_click", "switch"),
+            ("Tap and drag", "tap_and_drag", "switch"),
+            ("Drag lock", "drag_lock", "switch"),
+            ("Accel speed", "trackpad_accel_speed", "float"),
+            ("Natural scrolling", "trackpad_natural_scrolling", "switch"),
+            ("Scroll factor", "trackpad_scroll_factor", "float"),
+            ("Disable while typing", "trackpad_disable_while_typing", "switch"),
+            ("Middle button emulation", "trackpad_middle_button_emulation", "switch"),
+            ("Send events mode", "trackpad_send_events_mode", "int"),
+        ]
+        if not INPUT or not os.path.isfile(INPUT):
+            return self._empty_page("No input file found. Add touchpad settings to config.conf or source an input file from it.")
+        lines = read_lines(INPUT)
+        if not any(get_simple(lines, key) is not None for _l, key, _s in fields):
+            return self._empty_page("No touchpad settings found in " + shortpath(INPUT) + ".")
+        page = Gtk.ScrolledWindow()
+        page.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.set_margin_top(10); box.set_margin_start(12); box.set_margin_end(12); box.set_margin_bottom(10)
+        page.set_child(box)
+        s = Section("Gestures & tapping")
+        for label, key, st in fields:
+            if st == "switch":
+                sw = self._switch(get_simple(lines, key, "0") == "1")
+                s.add_row(label, sw)
+                self.field(sw, "switch", INPUT, key)
+            elif st == "int":
+                sb = self._spin(float(get_simple(lines, key, 0)), 0, 2, 1)
+                s.add_row(label, sb)
+                self.field(sb, "int", INPUT, key)
+            else:
+                sb = self._spin(float(get_simple(lines, key, 0)), -2, 2, 0.05)
+                s.add_row(label, sb)
+                self.field(sb, "float", INPUT, key)
+        spacer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        spacer.append(s)
+        spacer.append(Gtk.Box(hexpand=True))
+        spacer.set_hexpand(True)
+        spacer.set_vexpand(True)
+        page.set_child(spacer)
+        return page
+
+    def b_cursor(self):
+        if not CURSOR or not os.path.isfile(CURSOR):
+            return self._empty_page("No cursor settings found. Add cursor_theme and cursor_size to a file sourced by config.conf.")
+        lines = read_lines(CURSOR)
+        if get_simple(lines, "cursor_size") is None and get_simple(lines, "cursor_theme") is None:
+            return self._empty_page("No cursor settings found in " + shortpath(CURSOR) + ".")
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        page.set_hexpand(True)
+        page.set_vexpand(True)
+        s = Section("Appearance")
+        sb = self._spin(float(get_simple(lines, "cursor_size", 26)), 8, 128, 1)
+        s.add_row("Size", sb)
+        self.field(sb, "int", CURSOR, "cursor_size")
+        themes = discover_cursor_themes()
+        if not themes:
+            themes = [get_simple(lines, "cursor_theme", "") or "default"]
+        dd = Gtk.DropDown.new_from_strings(themes)
+        dd.set_show_arrow(True)
+        dd.set_enable_search(True)
+        cur_theme = get_simple(lines, "cursor_theme", "") or themes[0]
+        idx = themes.index(cur_theme) if cur_theme in themes else 0
+        dd.set_selected(idx)
+        self._dropdown_themes[dd] = themes
+        self.field(dd, "dropdown", CURSOR, "cursor_theme")
+        s.add_row("Theme", dd)
+        page.append(s)
+        page.append(Gtk.Box(hexpand=True))
+        return page
+
+    def detect_outputs(self):
+        import glob as _glob
+        import json as _json
+        import socket as _socket
+        for sp in _glob.glob("/run/user/%d/mango-*.sock" % os.getuid()):
+            try:
+                s = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+                s.settimeout(1.5)
+                s.connect(sp)
+                s.sendall(b"get all-monitors\n")
+                data = s.recv(262144)
+                s.close()
+                obj = _json.loads(data.decode("utf-8", "replace") or "{}")
+                mons = [m for m in obj.get("monitors", []) if m.get("active")]
+                if mons:
+                    return mons
+            except (OSError, ValueError):
+                continue
+        return []
+
+    def _monitor_for_name(self, name):
+        if not name:
+            return None
+        for m in getattr(self, "_detected_outputs", []):
+            out = str(m.get("name", ""))
+            try:
+                if re.fullmatch(name, out):
+                    return m
+            except re.error:
+                if name == out:
+                    return m
+        return None
+
+    def b_outputs(self):
+        if not OUTPUTS or not os.path.isfile(OUTPUTS):
+            return self._empty_page("No outputs file found. Add monitor_rule lines to config.conf or source an outputs file from it.")
+        page = Gtk.ScrolledWindow()
+        page.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        box.set_margin_top(10); box.set_margin_start(12); box.set_margin_end(12); box.set_margin_bottom(10)
+        box.set_hexpand(True)
+        page.set_child(box)
+
+        self._detected_outputs = self.detect_outputs()
+        det = Section("Detected outputs")
+        if self._detected_outputs:
+            for m in self._detected_outputs:
+                row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+                name = Gtk.Label(label=str(m.get("name", "?")))
+                name.add_css_class("bind-combo")
+                name.set_xalign(0)
+                name.set_width_chars(14)
+                spec = Gtk.Label(label="%s×%s · scale %s · at %s,%s" % (
+                    m.get("width", "?"), m.get("height", "?"), m.get("scale", 1),
+                    m.get("x", 0), m.get("y", 0)))
+                spec.add_css_class("dim-label")
+                spec.set_xalign(0)
+                spec.set_hexpand(True)
+                use = Gtk.Button(label="Add rule")
+                use.add_css_class("flat")
+                use.connect("clicked", lambda _b, m=m: self.add_output_rule(
+                    prefill={"name": str(m.get("name", "")), "width": m.get("width", 0),
+                             "height": m.get("height", 0), "x": m.get("x", 0),
+                             "y": m.get("y", 0), "scale": m.get("scale", 1)}))
+                row.append(name)
+                row.append(spec)
+                row.append(use)
+                det.box.append(row)
+        else:
+            hint = Gtk.Label(label="No running Mango session detected — add rules manually below.")
+            hint.add_css_class("dim-label")
+            hint.set_xalign(0)
+            hint.set_wrap(True)
+            det.box.append(hint)
+
+        s = Section("Monitor rules")
+        self.out_box = s.box
+        self.out_rows = []
+        self.load_output_rules()
+
+        add_btn = Gtk.Button(label="+ Add monitor rule")
+        add_btn.connect("clicked", lambda _b: self.add_output_rule())
+
+        note = Gtk.Label(label="name supports regex (^DP-2$). If a resolution doesn't change, tick Custom — many monitors don't advertise every mode. Use primary:1 for XWayland games.")
+        note.add_css_class("dim-label")
+        note.set_wrap(True)
+        note.set_xalign(0)
+
+        box.append(det)
+        box.append(s)
+        box.append(add_btn)
+        box.append(note)
+        box.append(Gtk.Box(hexpand=True))
+        return page
+
+    def load_output_rules(self):
+        if getattr(self, "out_box", None) is None:
+            return
+        self.out_rows = []
+        self._clear_container(self.out_box)
+        for raw in read_lines(OUTPUTS):
+            if raw.strip().startswith("monitor_rule="):
+                self.add_output_rule(line=raw.strip())
+        if not self.out_rows:
+            self.add_output_rule()
+
+    def add_output_rule(self, _b=None, line="", prefill=None):
+        raw = (line or "").strip()
+        kv = {}
+        if raw.startswith("monitor_rule="):
+            kv = parse_kv(raw[len("monitor_rule="):])
+        if prefill:
+            kv.update(prefill)
+        known = {"name", "width", "height", "refresh", "x", "y", "scale", "rr", "vrr", "hdr", "primary", "disable", "custom"}
+        extra = {k: v for k, v in kv.items() if k not in known}
+
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        card.add_css_class("bind-row")
+
+        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        e_name = self._entry(kv.get("name", ""))
+        e_name.set_placeholder_text("eDP-1 or regex ^DP-2$")
+        e_name.set_hexpand(True)
+        pick = Gtk.MenuButton(label="Pick")
+        pop = Gtk.Popover()
+        pb = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        mons = getattr(self, "_detected_outputs", [])
+        if mons:
+            for m in mons:
+                b = Gtk.Button(label=str(m.get("name", "?")))
+                b.add_css_class("flat")
+                b.connect("clicked", lambda _x, n=str(m.get("name", "")), p=pop: (e_name.set_text(n), p.popdown()))
+                pb.append(b)
+        else:
+            pb.append(Gtk.Label(label="No outputs detected"))
+        pop.set_child(pb)
+        pick.set_popover(pop)
+        rm = Gtk.Button(label="×")
+        rm.add_css_class("flat")
+        rm.set_tooltip_text("Remove this monitor rule")
+        head.append(e_name)
+        head.append(pick)
+        head.append(rm)
+
+        grid = Gtk.Grid.new()
+        grid.set_column_spacing(10)
+        grid.set_row_spacing(6)
+        spins = {}
+        specs = [("Width", "width", 0, 9999, 1), ("Height", "height", 0, 9999, 1),
+                 ("Refresh", "refresh", 0, 500, 0.01), ("X", "x", 0, 99999, 1),
+                 ("Y", "y", 0, 99999, 1), ("Scale", "scale", 0.01, 10, 0.05)]
+        for i, (label, key, lo, hi, step) in enumerate(specs):
+            try:
+                val = float(kv.get(key, 0) or 0)
+            except ValueError:
+                val = 0.0
+            sp = self._spin(val, lo, hi, step)
+            spins[key] = sp
+            lab = Gtk.Label(label=label)
+            lab.add_css_class("dim-label")
+            lab.set_xalign(0)
+            r, c = divmod(i, 3)
+            grid.attach(lab, c * 2, r, 1, 1)
+            grid.attach(sp, c * 2 + 1, r, 1, 1)
+
+        tr_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        tr_lbl = Gtk.Label(label="Transform")
+        tr_lbl.add_css_class("dim-label")
+        rr = Gtk.DropDown.new_from_strings([
+            "0 · normal", "1 · 90° CCW", "2 · 180°", "3 · 270° CCW",
+            "4 · flipped", "5 · flipped 90°", "6 · flipped 180°", "7 · flipped 270°"])
+        try:
+            rr.set_selected(max(0, min(7, int(kv.get("rr", 0) or 0))))
+        except ValueError:
+            rr.set_selected(0)
+        tr_row.append(tr_lbl)
+        tr_row.append(rr)
+
+        sw_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        switches = {}
+        for key, label in (("vrr", "VRR"), ("hdr", "HDR"), ("primary", "Primary"),
+                           ("custom", "Custom"), ("disable", "Disabled")):
+            cb = Gtk.CheckButton(label=label)
+            cb.set_active(str(kv.get(key, "0")).lower() in ("1", "true", "yes"))
+            sw_row.append(cb)
+            switches[key] = cb
+
+        def auto_custom(*_a):
+            if switches["custom"].get_active():
+                return
+            w = int(spins["width"].get_value())
+            h = int(spins["height"].get_value())
+            if w <= 0 or h <= 0:
+                return
+            det = self._monitor_for_name(e_name.get_text().strip())
+            if det is not None and (w, h) != (det.get("width"), det.get("height")):
+                switches["custom"].set_active(True)
+        spins["width"].connect("value-changed", auto_custom)
+        spins["height"].connect("value-changed", auto_custom)
+
+        entry = {"card": card, "name": e_name, "spins": spins, "rr": rr,
+                 "sw": switches, "orig": raw, "extra": extra, "keys": set(kv.keys())}
+
+        def remove(_b2=None, entry=entry, card=card):
+            parent = card.get_parent()
+            if parent is not None:
+                parent.remove(card)
+            if entry in self.out_rows:
+                self.out_rows.remove(entry)
+
+        rm.connect("clicked", remove)
+        card.append(head)
+        card.append(grid)
+        card.append(tr_row)
+        card.append(sw_row)
+        self.out_box.append(card)
+        self.out_rows.append(entry)
+        return entry
+
+    def _monitor_line(self, e):
+        kv = dict(e.get("extra") or {})
+        present = e.get("keys") or set()
+        name = e["name"].get_text().strip()
+        if name:
+            kv["name"] = name
+        for key in ("width", "height"):
+            v = int(e["spins"][key].get_value())
+            if v > 0 or key in present:
+                kv[key] = str(v)
+        refr = e["spins"]["refresh"].get_value()
+        if refr > 0 or "refresh" in present:
+            kv["refresh"] = ("%.2f" % refr).rstrip("0").rstrip(".")
+        for key in ("x", "y"):
+            v = int(e["spins"][key].get_value())
+            if v != 0 or key in present:
+                kv[key] = str(v)
+        sc = e["spins"]["scale"].get_value()
+        if abs(sc - 1.0) > 0.001 or "scale" in present:
+            kv["scale"] = ("%.2f" % sc).rstrip("0").rstrip(".") or "1"
+        rsel = e["rr"].get_selected()
+        if rsel or "rr" in present:
+            kv["rr"] = str(rsel)
+        for key, cb in e["sw"].items():
+            if cb.get_active() or key in present:
+                kv[key] = "1" if cb.get_active() else "0"
+        if not name and not any(k in kv for k in ("make", "model", "serial")):
+            return None
+        order = ["name", "make", "model", "serial", "width", "height", "refresh", "x", "y",
+                 "scale", "rr", "vrr", "hdr", "primary", "disable", "custom",
+                 "hdr_min_lum", "hdr_max_lum", "hdr_max_avg_lum", "hdr_force", "icc"]
+        keys = [k for k in order if k in kv] + [k for k in kv if k not in order]
+        return ",".join("%s:%s" % (k, kv[k]) for k in keys)
+
+    def b_windowrules(self):
+        if not WINDOWRULES or not os.path.isfile(WINDOWRULES):
+            return self._empty_page("No window rules file found. Add window_rule lines to config.conf or source a rules file from it.")
+        page = Gtk.ScrolledWindow()
+        page.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.set_margin_top(10); box.set_margin_start(12); box.set_margin_end(12); box.set_margin_bottom(10)
+        page.set_child(box)
+        s = Section("Rules list")
+        self.wr_rows = []
+        self.wr_box = s.box
+        self.load_wr_from_lines()
+        add_btn = Gtk.Button(label="+ Add rule")
+        add_btn.connect("clicked", self.add_wr_rule)
+        box.append(s)
+        box.append(add_btn)
+        box.append(Gtk.Box(hexpand=True))
+        page.set_child(box)
+        return page
+
+    def add_wr_rule(self, _b=None, line=""):
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        app = self._entry("")
+        floating = Gtk.Switch.new()
+        rm = Gtk.Button(label="×")
+        rm.add_css_class("destructive-action")
+        rm.set_size_request(24, 24)
+        raw = (line or "").strip()
+        kv = {}
+        if raw.startswith("window_rule="):
+            kv = parse_kv(raw[len("window_rule="):])
+        extra = {k: v for k, v in kv.items() if k not in ("app_id", "is_floating")}
+        app.set_text(kv.get("app_id", ""))
+        floating.set_state(str(kv.get("is_floating", "0")).lower() in ("1", "true", "yes"))
+        entry = {"row": row, "app": app, "floating": floating, "orig": raw, "extra": extra}
+
+        def remove(_b2):
+            self.wr_box.remove(row)
+            self.wr_rows.remove(entry)
+
+        rm.connect("clicked", remove)
+        row.append(app)
+        row.append(Gtk.Label(label="is_floating:"))
+        row.append(floating)
+        row.append(rm)
+        self.wr_box.append(row)
+        row.set_visible(True)
+        self.wr_rows.append(entry)
+        return entry
+
+    def b_keybinds(self):
+        if not BINDS or not os.path.isfile(BINDS):
+            return self._empty_page("No keybinds file found. Add bind lines to config.conf or source a binds file from it.")
+        page = Gtk.ScrolledWindow()
+        page.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        page.set_vexpand(True)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        box.set_margin_top(10); box.set_margin_start(12); box.set_margin_end(12); box.set_margin_bottom(10)
+        box.set_hexpand(True)
+        page.set_child(box)
+
+        top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.kb_search = Gtk.SearchEntry()
+        self.kb_search.set_placeholder_text("Search combo, action or command…")
+        self.kb_search.set_hexpand(True)
+        self.kb_search.connect("search-changed", lambda _e: self.filter_kb())
+        self.kb_count = Gtk.Label(label="")
+        self.kb_count.add_css_class("dim-label")
+        add_btn = Gtk.Button(label="+ Add bind")
+        add_btn.connect("clicked", self.add_kb_row)
+        top.append(self.kb_search)
+        top.append(self.kb_count)
+        top.append(add_btn)
+        box.append(top)
+
+        self.kb_groups_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.kb_groups_box.set_hexpand(True)
+        box.append(self.kb_groups_box)
+
+        hint = Gtk.Label(label="Click a section to open it — one at a time · use the pencil to edit · Apply only writes what changed")
+        hint.add_css_class("dim-label")
+        hint.set_wrap(True)
+        hint.set_xalign(0)
+        box.append(hint)
+
+        self.kb_groups = []
+        self.kb_rows = []
+        self.kb_new_box = None
+        self.kb_new_exp = None
+        self.build_kb_rows_from_lines()
+        return page
+
+    BIND_RE = re.compile(r"^(bind[a-z]*)=(.*)$")
+    SECTION_RE = re.compile(r"^#\s*=+\s*(.+?)\s*=+$")
+
+    # file section -> (top-level category, friendly name)
+    KB_SECTIONS = {
+        "window management": ("mango", "Window management"),
+        "focus navigation": ("mango", "Focus navigation"),
+        "window movement": ("mango", "Move windows"),
+        "window sizing": ("mango", "Resize windows"),
+        "monitor navigation": ("mango", "Monitor navigation"),
+        "layout": ("mango", "Layout & gaps"),
+        "tags: previous / next": ("mango", "Workspaces: prev / next"),
+        "workspace switching": ("mango", "Switch workspace"),
+        "move window to workspace": ("mango", "Send window to workspace"),
+        "axis / mouse / gesture": ("mango", "Mouse & gestures"),
+        "keybinds": ("mango", "General"),
+        "application launchers": ("system", "Launchers"),
+        "clipboard / power / notifications": ("system", "Clipboard, power & notifications"),
+        "screenshot: interactive / full / window": ("system", "Screenshots"),
+        "wallpaper": ("system", "Wallpaper"),
+        "audio controls": ("system", "Audio"),
+        "brightness controls": ("system", "Brightness"),
+    }
+
+    def _kb_group_category(self, name, lines):
+        key = name.strip().lower()
+        mapped = self.KB_SECTIONS.get(key)
+        actions = []
+        for line in lines:
+            body = line.split("=", 1)[1] if "=" in line else ""
+            parts = body.split(",")
+            if len(parts) >= 3:
+                actions.append(parts[2].strip())
+        if actions:
+            compositor = any(a not in ("spawn", "spawn_shell") for a in actions)
+            cat = "mango" if compositor else "system"
+            return cat, (mapped[1] if mapped else name.strip() or "Keybinds")
+        if mapped:
+            return mapped
+        return "system", name.strip() or "Keybinds"
+
+    def build_kb_rows_from_lines(self):
+        self.kb_rows = []
+        self.kb_groups = []
+        self.kb_expanders = []
+        if getattr(self, "kb_groups_box", None) is None:
+            return
+        self._clear_container(self.kb_groups_box)
+        groups, cur = [], None
+        for raw in read_lines(BINDS):
+            s = raw.strip()
+            m = self.SECTION_RE.match(s)
+            if m and s.startswith("#"):
+                cur = {"name": m.group(1).strip(), "lines": []}
+                groups.append(cur)
+                continue
+            if self.BIND_RE.match(s):
+                if cur is None:
+                    cur = {"name": "Keybinds", "lines": []}
+                    groups.append(cur)
+                cur["lines"].append(s)
+        cats = [("mango", "Mango  ·  compositor"), ("system", "System  ·  apps & hardware")]
+        buckets = {k: [] for k, _ in cats}
+        for g in groups:
+            if not g["lines"]:
+                continue
+            cat, pretty = self._kb_group_category(g["name"], g["lines"])
+            buckets[cat].append((pretty, g["lines"]))
+
+        self.kb_cats = []
+        self._kb_first = set()
+        ci = 0
+        for cat, cat_title in cats:
+            items = buckets[cat]
+            if not items:
+                continue
+            total = sum(len(lines) for _, lines in items)
+            cat_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+            hdr = Gtk.Label(label=f"{cat_title}   ·   {total}")
+            hdr.add_css_class("kb-cat")
+            hdr.set_xalign(0)
+            cat_box.append(hdr)
+            first = True
+            for pretty, lines in items:
+                exp = Gtk.Expander(label=f"{pretty}   ·   {len(lines)}")
+                exp.add_css_class("kb-group")
+                exp.set_expanded(False)
+                exp.connect("notify::expanded", self._on_kb_expanded)
+                self.kb_expanders.append(exp)
+                first = False
+                inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                inner.set_margin_top(4)
+                for line in lines:
+                    self.add_kb_row(line=line, container=inner, section=pretty)
+                exp.set_child(inner)
+                cat_box.append(exp)
+                self.kb_groups.append((exp, inner, ci))
+            self.kb_groups_box.append(cat_box)
+            self.kb_cats.append((hdr, cat_box, ci))
+            ci += 1
+
+        self.kb_new_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        self.kb_new_box.set_margin_top(4)
+        exp_new = Gtk.Expander(label="New binds")
+        exp_new.set_child(self.kb_new_box)
+        exp_new.set_expanded(True)
+        exp_new.set_visible(False)
+        self.kb_new_exp = exp_new
+        self.kb_groups_box.append(exp_new)
+        self.kb_groups.append((exp_new, self.kb_new_box, -1))
+        self.update_kb_count()
+
+    def build_kb_rows_from_scratch(self):
+        self.build_kb_rows_from_lines()
+
+    def update_kb_count(self):
+        if getattr(self, "kb_count", None) is None:
+            return
+        n = len(getattr(self, "kb_rows", []))
+        self.kb_count.set_label(f"{n} binds")
+
+    def filter_kb(self):
+        if getattr(self, "kb_search", None) is None:
+            return
+        q = (self.kb_search.get_text() or "").strip().lower()
+        shown = 0
+        per_cat = {}
+        self._kb_filtering = True
+        for exp, inner, ci in getattr(self, "kb_groups", []):
+            child = inner.get_first_child()
+            matches = 0
+            while child is not None:
+                nxt = child.get_next_sibling()
+                hit = (not q) or (q in getattr(child, "_search_text", ""))
+                child.set_visible(hit)
+                matches += 1 if hit else 0
+                child = nxt
+            exp.set_visible(matches > 0)
+            if q:
+                exp.set_expanded(matches > 0)
+            else:
+                exp.set_expanded(False)
+            per_cat[ci] = per_cat.get(ci, 0) + matches
+            shown += matches
+        self._kb_filtering = False
+        for hdr, cat_box, ci in getattr(self, "kb_cats", []):
+            hdr.set_visible(per_cat.get(ci, 0) > 0)
+        if q:
+            self.kb_count.set_label(f"{shown} match" + ("" if shown == 1 else "es"))
+        else:
+            self.update_kb_count()
+
+    def _on_kb_expanded(self, exp, _pspec):
+        if getattr(self, "_kb_filtering", False) or getattr(self, "_kb_collapsing", False):
+            return
+        if not exp.get_expanded():
+            return
+        self._kb_collapsing = True
+        for other in getattr(self, "kb_expanders", []):
+            if other is not exp and other.get_expanded():
+                other.set_expanded(False)
+        self._kb_collapsing = False
+
+    def add_kb_row(self, _b=None, line="", container=None, section=""):
+        raw = (line or "").strip()
+        m = self.BIND_RE.match(raw)
+        flag = m.group(1) if m else "bind"
+        rest = m.group(2) if m else raw
+        parts = rest.split(",", 3)
+        mods = parts[0] if len(parts) > 0 else ""
+        key = parts[1] if len(parts) > 1 else ""
+        action = parts[2] if len(parts) > 2 else ""
+        args = parts[3] if len(parts) > 3 else ""
+        # unwrap a doubled prefix left by older buggy saves: bind=bind=...
+        while self.BIND_RE.match(mods.strip()):
+            mods = self.BIND_RE.match(mods.strip()).group(2)
+
+        if container is None:
+            container = self.kb_new_box
+            if getattr(self, "kb_new_exp", None) is not None:
+                self.kb_new_exp.set_visible(True)
+                self.kb_new_exp.set_expanded(True)
+
+        row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        row.add_css_class("kb-row")
+        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        combo = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        combo.set_valign(Gtk.Align.CENTER)
+        combo.set_size_request(196, -1)
+        cmd = Gtk.Label()
+        cmd.add_css_class("kb-action")
+        cmd.set_xalign(0)
+        cmd.set_hexpand(True)
+        cmd.set_ellipsize(Pango.EllipsizeMode.END)
+        edit = Gtk.ToggleButton()
+        edit.set_icon_name("document-edit-symbolic")
+        edit.add_css_class("flat")
+        edit.set_tooltip_text("Edit this bind")
+        rm = Gtk.Button.new_from_icon_name("user-trash-symbolic")
+        rm.add_css_class("flat")
+        rm.set_tooltip_text("Delete this bind")
+        head.append(combo)
+        head.append(cmd)
+        head.append(edit)
+
+        e_mods = self._entry(mods)
+        e_key = self._entry(key)
+        e_act = self._entry(action)
+        e_args = self._entry(args)
+        fields = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        for title, w, width in (("Mods", e_mods, 8), ("Key", e_key, 6), ("Action", e_act, 10), ("Args", e_args, 16)):
+            w.set_width_chars(width)
+            w.set_max_width_chars(width + 10)
+            w.set_hexpand(True)
+            col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            lbl = Gtk.Label(label=title)
+            lbl.add_css_class("dim-label")
+            lbl.set_xalign(0)
+            col.append(lbl)
+            col.append(w)
+            col.set_hexpand(True)
+            fields.append(col)
+        rm.set_valign(Gtk.Align.END)
+        fields.append(rm)
+        rev = Gtk.Revealer()
+        rev.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        rev.set_child(fields)
+
+        def pretty_key(k):
+            k = (k or "").strip()
+            names = {"space": "Space", "comma": "Comma", "minus": "Minus", "equal": "Equal",
+                     "slash": "Slash", "period": "Period", "Return": "Return", "Tab": "Tab",
+                     "Page_Up": "Page Up", "Page_Down": "Page Down", "Left": "Left",
+                     "Right": "Right", "Up": "Up", "Down": "Down", "Print": "Print"}
+            if k in names:
+                return names[k]
+            return k.upper() if len(k) == 1 else k
+
+        def friendly(mod_str, key_str):
+            names = {"super": "Super", "mod4": "Super", "ctrl": "Ctrl", "control": "Ctrl",
+                     "alt": "Alt", "shift": "Shift"}
+            mods = [names.get(p.strip().lower(), p.strip())
+                    for p in (mod_str or "").split("+")
+                    if p.strip() and p.strip().lower() != "none"]
+            keyp = pretty_key(key_str)
+            return " + ".join(mods + ([keyp] if keyp else [])) or "—"
+
+        entry = {"row": row, "e_mods": e_mods, "e_key": e_key, "e_act": e_act, "e_args": e_args,
+                 "flag": flag, "orig": raw, "section": section}
+
+        def refresh():
+            combo_txt = friendly(e_mods.get_text(), e_key.get_text())
+            a = e_act.get_text().strip()
+            g = e_args.get_text().strip()
+            cmd_txt = g if a == "spawn" else (f"{a} {g}".strip() or "—")
+            ch = combo.get_first_child()
+            while ch is not None:
+                nxt = ch.get_next_sibling()
+                combo.remove(ch)
+                ch = nxt
+            for part in combo_txt.split(" + "):
+                cap = Gtk.Label(label=part)
+                cap.add_css_class("keycap")
+                combo.append(cap)
+            cmd.set_label(cmd_txt)
+            combo.set_tooltip_text(combo_txt)
+            cmd.set_tooltip_text(f"{a} {g}".strip())
+            row._search_text = " ".join((e_mods.get_text(), e_key.get_text(), a, g, combo_txt, entry.get("section", ""))).lower()
+
+        def remove(_b2=None, entry=entry, row=row):
+            parent = row.get_parent()
+            if parent is not None:
+                parent.remove(row)
+            if entry in self.kb_rows:
+                self.kb_rows.remove(entry)
+            self.update_kb_count()
+
+        rm.connect("clicked", remove)
+        edit.connect("toggled", lambda b: rev.set_reveal_child(b.get_active()))
+        for e in (e_mods, e_key, e_act, e_args):
+            e.connect("changed", lambda _e: refresh())
+        row.append(head)
+        row.append(rev)
+        container.append(row)
+        self.kb_rows.append(entry)
+        refresh()
+        self.update_kb_count()
+        return entry
+
+    # ---- load / apply / reset
+
+    def load_all(self):
+        for c in self.controls:
+            w = c["widget"]
+            kind, path, key = c["kind"], c["path"], c["key"]
+            lines = read_lines(path)
+            cur = get_simple(lines, key)
+            if cur is None:
+                continue
+            if kind == "int":
+                w.set_value(int(float(cur)))
+            elif kind == "float":
+                w.set_value(float(cur))
+            elif kind == "switch":
+                w.set_state(cur == "1")
+            elif kind == "dropdown":
+                themes = self._dropdown_themes.get(w, [])
+                if themes and w in self._dropdown_themes:
+                    idx = 0
+                    if cur and cur in themes:
+                        idx = themes.index(cur)
+                    w.set_selected(idx)
+            elif kind == "color":
+                try:
+                    w.set_rgba(hex_to_rgba(cur))
+                except Exception:
+                    pass
+            elif kind == "str":
+                w.set_text(cur)
+        # outputs / window rules / keybinds: rebuild from disk
+        self.load_output_rules()
+        self.load_wr_from_lines()
+        self.build_kb_rows_from_lines()
+
+    def load_wr_from_lines(self):
+        self.wr_rows = []
+        if not WINDOWRULES or getattr(self, "wr_box", None) is None:
+            return
+        self._clear_container(self.wr_box)
+        lines = read_lines(WINDOWRULES)
+        for line in lines:
+            if line.strip().startswith("window_rule="):
+                e = self.add_wr_rule(line=line.strip())
+        if not self.wr_rows:
+            self.add_wr_rule()
+
+    def _clear_container(self, box):
+        child = box.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            box.remove(child)
+            child = nxt
+
+    def b_reset(self, _b):
+        self.load_all()
+        self.status.set_label("Reloaded from disk.")
+        self.status.remove_css_class("destructive-action")
+
+    def _profile_paths(self):
+        if PROFILE is not None:
+            vals = [PROFILE.main] + list(PROFILE.paths.values())
+        else:
+            vals = [LAYOUT, NOCTALIA, COLORS, INPUT, CURSOR, OUTPUTS, WINDOWRULES, BINDS]
+        out = []
+        for path in vals:
+            if path and path not in out:
+                out.append(path)
+        return out
+
+    def on_apply(self, _b):
+        paths = self._profile_paths()
+        snapshot = {p: read_lines(p) for p in paths if os.path.exists(p)}
+        bakdir = os.path.join(CONFIG_DIR, ".autobak")
+        try:
+            os.makedirs(bakdir, exist_ok=True)
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            for p in paths:
+                if os.path.exists(p):
+                    rel = os.path.relpath(p, CONFIG_DIR).replace(os.sep, "_")
+                    shutil.copy2(p, os.path.join(bakdir, stamp + "-" + rel))
+        except OSError:
+            pass
+        touched = {}
+        for c in self.controls:
+            w = c["widget"]
+            kind, path, key = c["kind"], c["path"], c["key"]
+            if not path or not os.path.isfile(path):
+                continue
+            if path not in touched:
+                touched[path] = read_lines(path)
+            lines = touched[path]
+            cur = get_simple(lines, key)
+            # Never invent settings that were not already in this file.
+            if cur is None:
+                continue
+            if kind == "int":
+                try:
+                    if int(float(cur)) == int(w.get_value()):
+                        continue
+                except (TypeError, ValueError):
+                    pass
+                new = str(int(w.get_value()))
+            elif kind == "float":
+                try:
+                    if abs(float(cur) - w.get_value()) < 1e-9:
+                        continue
+                except (TypeError, ValueError):
+                    pass
+                new = fmt_float(w.get_value())
+            elif kind == "switch":
+                if (cur == "1") == bool(w.get_state()):
+                    continue
+                new = "1" if w.get_state() else "0"
+            elif kind == "dropdown":
+                themes = self._dropdown_themes.get(w, [])
+                sel = w.get_selected()
+                new = themes[sel] if isinstance(sel, int) and 0 <= sel < len(themes) else cur
+            elif kind == "color":
+                try:
+                    old_rgba = hex_to_rgba(cur)
+                    new_rgba = w.get_rgba()
+                    if all(abs(getattr(old_rgba, c) - getattr(new_rgba, c)) < (0.5 / 255.0)
+                           for c in ("red", "green", "blue", "alpha")):
+                        continue
+                except Exception:
+                    pass
+                new = rgba_to_hex(w.get_rgba())
+            elif kind == "str":
+                new = w.get_text()
+            else:
+                continue
+            if new == cur:
+                continue
+            touched[path] = set_simple(lines, key, new, sep=key_sep(lines, key))
+        for path, lines in touched.items():
+            if lines != snapshot.get(path):
+                write_lines(path, lines)
+
+        outputs_changed = False
+        old_outputs = None
+        if OUTPUTS and hasattr(self, "out_rows") and getattr(self, "out_box", None) is not None:
+            old_outputs = read_lines(OUTPUTS)
+            pool = {}
+            for e in self.out_rows:
+                if e.get("orig"):
+                    pool.setdefault(e["orig"], []).append(e)
+            out_lines = []
+            for raw in read_lines(OUTPUTS):
+                s = raw.strip()
+                if s.startswith("monitor_rule="):
+                    q = pool.get(s)
+                    if not q:
+                        continue
+                    e = q.pop(0)
+                    line = self._monitor_line(e)
+                    if line:
+                        newline = "monitor_rule=" + line
+                        e["orig"] = newline
+                        out_lines.append(newline + "\n")
+                else:
+                    out_lines.append(raw)
+            for e in self.out_rows:
+                if not e.get("orig"):
+                    line = self._monitor_line(e)
+                    if line:
+                        newline = "monitor_rule=" + line
+                        e["orig"] = newline
+                        out_lines.append(newline + "\n")
+            outputs_changed = old_outputs != out_lines
+            if outputs_changed:
+                write_lines(OUTPUTS, out_lines)
+
+        if WINDOWRULES and hasattr(self, "wr_rows"):
+            orig_rules = read_lines(WINDOWRULES)
+            out_lines = []
+            pool = {}
+            for e in self.wr_rows:
+                if e.get("orig"):
+                    pool.setdefault(e["orig"], []).append(e)
+            for raw in read_lines(WINDOWRULES):
+                s = raw.strip()
+                if s.startswith("window_rule="):
+                    q = pool.get(s)
+                    if not q:
+                        continue
+                    e = q.pop(0)
+                    app = e["app"].get_text().strip()
+                    kv = dict(e.get("extra") or {})
+                    kv["app_id"] = app
+                    kv["is_floating"] = "1" if e["floating"].get_state() else "0"
+                    newline = "window_rule=" + ",".join(f"{k}:{v}" for k, v in kv.items())
+                    e["orig"] = newline
+                    out_lines.append(newline + "\n")
+                else:
+                    out_lines.append(raw)
+            for e in self.wr_rows:
+                if e.get("orig"):
+                    continue
+                app = e["app"].get_text().strip()
+                if not app:
+                    continue
+                kv = dict(e.get("extra") or {})
+                kv["app_id"] = app
+                kv["is_floating"] = "1" if e["floating"].get_state() else "0"
+                newline = "window_rule=" + ",".join(f"{k}:{v}" for k, v in kv.items())
+                e["orig"] = newline
+                out_lines.append(newline + "\n")
+            if out_lines != orig_rules:
+                write_lines(WINDOWRULES, out_lines)
+
+        if BINDS and hasattr(self, "kb_rows"):
+            orig_lines = read_lines(BINDS)
+            pool = {}
+            for e in self.kb_rows:
+                if e.get("orig"):
+                    pool.setdefault(e["orig"], []).append(e)
+            out_lines = []
+            for raw in orig_lines:
+                s = raw.strip()
+                if self.BIND_RE.match(s):
+                    q = pool.get(s)
+                    if not q:
+                        continue  # row was deleted on purpose
+                    e = q.pop(0)
+                    newline = self._kb_line(e)
+                    if newline:
+                        e["orig"] = newline
+                        out_lines.append(newline + "\n")
+                else:
+                    out_lines.append(raw)
+            for e in self.kb_rows:
+                if not e.get("orig"):
+                    newline = self._kb_line(e)
+                    if newline:
+                        e["orig"] = newline
+                        out_lines.append(newline + "\n")
+            if out_lines and not out_lines[-1].endswith("\n"):
+                out_lines[-1] += "\n"
+            if out_lines != orig_lines:
+                write_lines(BINDS, out_lines)
+
+        ok, msg = self._validate_config()
+        if not ok:
+            for path, snap in snapshot.items():
+                write_lines(path, snap)
+            self.load_all()
+            self.status.set_label("Invalid — reverted: " + msg)
+            self.status.add_css_class("destructive-action")
+            return
+        if self.no_reload:
+            self.status.set_label("Applied — reload skipped.")
+        else:
+            reloaded = self._reload_mango()
+            self.status.set_label("Applied — Mango reloaded." if reloaded
+                                  else "Applied. Reload Mango to see the changes.")
+        self.status.remove_css_class("destructive-action")
+        if outputs_changed and old_outputs is not None:
+            self._show_output_guard(old_outputs)
+
+    def _show_output_guard(self, old_lines):
+        if self._guard_src is not None:
+            GLib.source_remove(self._guard_src)
+            self._guard_src = None
+            old_lines = self._guard_old or old_lines
+        self._guard_old = old_lines
+        self._guard_left = 10
+        self.guard_label.set_text("Reverting to the previous settings in 10s…")
+        self.guard_revealer.set_reveal_child(True)
+        self.apply_btn.set_sensitive(False)
+        self._guard_src = GLib.timeout_add(1000, self._guard_tick)
+
+    def _guard_tick(self):
+        self._guard_left -= 1
+        if self._guard_left <= 0:
+            self._guard_src = None
+            self._guard_finish(True)
+            return False
+        self.guard_label.set_text("Reverting to the previous settings in %ds…" % self._guard_left)
+        return True
+
+    def _guard_finish(self, do_revert):
+        if self._guard_src is not None:
+            GLib.source_remove(self._guard_src)
+            self._guard_src = None
+        if do_revert and self._guard_old is not None and OUTPUTS:
+            write_lines(OUTPUTS, self._guard_old)
+            self._reload_mango()
+            self.load_output_rules()
+            self.status.set_label("Display settings reverted — nothing changed.")
+            self.status.add_css_class("destructive-action")
+        else:
+            self.status.set_label("Display settings kept.")
+            self.status.remove_css_class("destructive-action")
+        self._guard_old = None
+        self.guard_revealer.set_reveal_child(False)
+        self.apply_btn.set_sensitive(True)
+
+    def _on_close_request(self, *_a):
+        if getattr(self, "_guard_old", None) is not None:
+            self._guard_finish(True)
+        return False
+
+    def _kb_line(self, e):
+        vals = []
+        for k in ("e_mods", "e_key", "e_act", "e_args"):
+            v = e[k].get_text().strip()
+            while self.BIND_RE.match(v):
+                v = self.BIND_RE.match(v).group(2).strip()
+            vals.append(v)
+        mods, key, action, args = vals
+        if not key or not action:
+            return None
+        parts = [mods, key, action, args]
+        while parts and parts[-1] == "":
+            parts.pop()
+        line = (e.get("flag") or "bind") + "=" + ",".join(parts)
+        return line if len(line.encode("utf-8")) <= 255 else None
+
+    def _validate_config(self):
+        try:
+            res = subprocess.run(["mango", "-p", "-c", os.path.join(CONFIG_DIR, "config.conf")],
+                                 capture_output=True, text=True, timeout=10)
+        except Exception as ex:
+            return True, "validator failed: %s" % ex
+        out = re.sub(r"\x1b\[[0-9;]*m", "", (res.stdout or "") + (res.stderr or "")).strip()
+        bad = res.returncode != 0 or re.search(r"\berror\b|unknown keyword|exceeds|invalid", out, re.I)
+        return (not bad), out[:220]
+
+    def _reload_mango(self):
+        import glob as _glob
+        import socket as _socket
+        for sp in _glob.glob("/run/user/%d/mango-*.sock" % os.getuid()):
+            try:
+                s = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+                s.settimeout(2)
+                s.connect(sp)
+                s.sendall(b"dispatch reload_config\n")
+                s.recv(4096)
+                s.close()
+                return True
+            except OSError:
+                continue
+        return False
+
+
+def parse_args(argv):
+    ap = argparse.ArgumentParser(
+        prog="mango-config",
+        description="GTK4 settings app for the Mango Wayland compositor.")
+    ap.add_argument("--config-dir", metavar="DIR",
+                    help="Mango config directory (default: ~/.config/mango)")
+    ap.add_argument("--tab", metavar="ID",
+                    help="open a tab directly (layout, theme, colors, cursor, mouse, "
+                         "touchpad, keys, outputs, rules)")
+    ap.add_argument("--no-reload", action="store_true",
+                    help="write and validate, but do not reload Mango")
+    ap.add_argument("--version", action="version",
+                    version="mango-config " + VERSION)
+    return ap.parse_args(argv)
+
+
+def main():
+    args = parse_args(sys.argv[1:])
+    config_dir = os.path.abspath(os.path.expanduser(
+        args.config_dir or os.environ.get("MANGO_CONFIG_DIR") or "~/.config/mango"))
+    profile = discover_profile(config_dir)
+    configure_profile(profile)
+    app = App(profile=profile, tab=args.tab, no_reload=args.no_reload)
+    return app.run([sys.argv[0]])
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,172 @@
+# mango-config
+
+A friendly GTK4 settings app for the [Mango](https://github.com/DreamMaoMao/mango) Wayland compositor.
+
+![CI](https://github.com/deopr/mango-config/actions/workflows/ci.yml/badge.svg)
+![License](https://img.shields.io/badge/license-MIT-blue)
+
+`mango-config` edits the Mango config files you already have. It does **not**
+require DMS, does not replace your config, and never rewrites keys you did not
+touch. Every Apply is validated and backed up.
+
+## Screenshots
+
+| Theme colors | Base colors |
+|---|---|
+| ![Theme colors](docs/screenshots/theme-colors.png) | ![Base colors](docs/screenshots/base-colors.png) |
+| **Outputs** | **Keybinds** |
+| ![Outputs](docs/screenshots/outputs.png) | ![Keybinds](docs/screenshots/keybinds.png) |
+
+## Features
+
+- **Layout & gaps** — border radius, border width, inner/outer gaps.
+- **Theme colors** — the extended palette from your theme, grouped into
+  surfaces, accents, jump labels and group bar.
+- **Base colors** — border, focus and urgent colors from the file that actually
+  takes effect.
+- **Cursor, mouse and touchpad** — size, theme, acceleration, scrolling,
+  tapping and gesture options.
+- **Outputs** — detected monitors, multiple `monitor_rule` entries, resolution,
+  refresh rate, scale, position, transform, VRR, HDR, primary and Custom mode.
+- **Window rules** — floating rules per app.
+- **Keybinds** — searchable, grouped by compositor vs apps, keycap-style combos
+  with per-bind editing.
+- **Display guard** — after an output change, an inline 10-second countdown
+  asks you to keep or revert. If the timer runs out, it reverts automatically.
+
+## Requirements
+
+- Mango Wayland compositor (running, for live reload and monitor detection)
+- Python 3.10+
+- GTK 4.10+ and PyGObject
+
+Install the toolkit on your distro:
+
+```bash
+# Fedora
+sudo dnf install python3-gobject gtk4
+
+# Arch
+sudo pacman -S python-gobject gtk4
+
+# Ubuntu / Debian
+sudo apt install python3-gi gir1.2-gtk-4.0
+```
+
+## Install
+
+```bash
+git clone https://github.com/deopr/mango-config.git
+cd mango-config
+./scripts/install.sh
+```
+
+The installer is user-level and needs no sudo. It installs:
+
+- `~/.local/bin/mango-config`
+- `~/.local/share/applications/io.github.deopr.MangoConfig.desktop`
+- `~/.local/share/icons/hicolor/scalable/apps/io.github.deopr.MangoConfig.svg`
+
+Then run `mango-config`, or launch **Mango Config** from your app launcher.
+
+Manual install is just:
+
+```bash
+install -Dm755 mango-config ~/.local/bin/mango-config
+```
+
+## Config discovery
+
+No configuration is required. The app reads `~/.config/mango/config.conf`,
+follows `source=` and `source_optional=` includes, and identifies what each file
+contains. This means it works with:
+
+- one big `config.conf` with everything inline,
+- a split config (`layout.conf`, `outputs.conf`, `binds.conf`, …),
+- a DMS-generated config with `dms/*.conf` fragments,
+- any custom directory, via `--config-dir` or `MANGO_CONFIG_DIR`.
+
+Only files that Mango actually sources are edited. See
+[docs/CONFIG-DISCOVERY.md](docs/CONFIG-DISCOVERY.md) for the details.
+
+## Migrating a DMS layout
+
+DMS users can keep their layout — the app reads it as-is. If you want to move
+the sourced `dms/*.conf` fragments to the config root, opt in:
+
+```bash
+./scripts/install.sh --migrate-dms
+```
+
+This translates:
+
+```
+~/.config/mango/dms/layout.conf   ->  ~/.config/mango/layout.conf
+~/.config/mango/dms/outputs.conf  ->  ~/.config/mango/outputs.conf
+...
+```
+
+and rewrites the matching `source=` lines. It backs up everything under
+`.autobak/migrate-<timestamp>/`, runs `mango -p`, and rolls the whole migration
+back if validation fails. Unsourced files stay where they are.
+
+> If you re-run `dms setup` later, DMS may recreate `dms/*.conf` and its own
+> source lines. Keep the DMS layout instead if you rely on DMS managing it.
+
+## How Apply works
+
+1. Backs up every touched file to `<config>/.autobak/<timestamp>-<name>`.
+2. Writes only controls whose values changed, and only keys that already exist
+   in the file. New binds, rules and monitor rules are appended explicitly.
+3. Runs `mango -p -c <config>/config.conf` and inspects the output (Mango can
+   return success even when it printed an error).
+4. On error, restores the snapshots and reloads the UI.
+5. On success, sends `dispatch reload_config` to the Mango IPC socket. If no
+   socket is available, it tells you to reload Mango yourself.
+
+Output changes additionally show the inline keep/revert guard.
+
+## CLI
+
+```bash
+mango-config                      # normal launch
+mango-config --tab keys           # open a tab directly
+mango-config --config-dir ~/dotfiles/mango
+mango-config --no-reload          # write and validate only
+mango-config --version
+```
+
+Tab IDs: `layout`, `theme`, `colors`, `cursor`, `mouse`, `touchpad`, `keys`,
+`outputs`, `rules`.
+
+## Limitations
+
+- `config.toml` is detected but not edited yet. Use `config.conf`.
+- When several sourced files contain binds, the app edits the file with the
+  most binds. Other bind files are left untouched.
+- Files generated by theme managers (Noctalia, DMS) can be regenerated by those
+  tools. Override the values in a later source file if you need them permanent.
+- The app edits text, not semantics: keep comments and unusual keys where they
+  are, but always review the diff if you hand-edit around it.
+
+## Development
+
+The app is a single Python file, `mango-config`. Run it directly:
+
+```bash
+python3 ./mango-config --config-dir /tmp/mango-test
+```
+
+Tests:
+
+```bash
+python3 tests/test_discovery.py
+bash tests/test_install.sh
+```
+
+The test suite creates throwaway config directories and never touches your real
+Mango config.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

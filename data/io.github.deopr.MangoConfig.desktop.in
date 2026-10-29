@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Mango Config
+GenericName=Compositor Settings
+Comment=GTK4 settings app for the Mango Wayland compositor
+Exec=@EXEC@
+Icon=io.github.deopr.MangoConfig
+Terminal=false
+Categories=Settings;DesktopSettings;
+Keywords=mango;wayland;compositor;settings;config;gtk;
+StartupNotify=true
+StartupWMClass=io.github.deopr.MangoConfig
