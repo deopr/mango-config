@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.1 — 2026-10-29
+
+Fix window rules handling:
+
+- Rules tab now finds rules files in subdirectories (`dms/`, `cfg/`) even when no
+  `window_rule=` line exists yet to score them by content (`WINDOWRULES` no longer
+  stays `None`).
+- Apply no longer deletes `window_rule=` lines that aren't in the in-memory pool;
+  untracked rules are preserved as-is.
+- `is_floating` is only written when it was originally present or the Floating
+  switch is on, instead of being force-added to every rule.
+- Blank rules (no `app_id`/`title`) are skipped on Apply instead of written out.
+
 ## 0.1.0 — 2026-10-29
 
 First public release.

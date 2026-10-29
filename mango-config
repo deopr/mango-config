@@ -16,7 +16,7 @@ gi.require_version("Gdk", "4.0")
 gi.require_version("Pango", "1.0")
 from gi.repository import Gdk, GLib, Gtk, Pango
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 APP_ID = "io.github.deopr.MangoConfig"
 
 DEFAULT_CONFIG_DIR = os.path.abspath(os.path.expanduser(
@@ -177,6 +177,10 @@ def discover_profile(config_dir):
                 if cand in profile.files:
                     profile.paths[role] = cand
                     break
+            if profile.paths[role] is None:
+                for path in profile.files:
+                    if os.path.basename(path) in FLAT_NAMES[role]:
+                        profile.paths[role] = path
 
     base_keys = {"border_color", "focus_color", "urgent_color"}
     base_scored = []
@@ -1387,7 +1391,7 @@ class App(Gtk.Application):
         extra = {k: v for k, v in kv.items() if k not in ("app_id", "is_floating")}
         app.set_text(kv.get("app_id", ""))
         floating.set_state(str(kv.get("is_floating", "0")).lower() in ("1", "true", "yes"))
-        entry = {"row": row, "app": app, "floating": floating, "orig": raw, "extra": extra}
+        entry = {"row": row, "app": app, "floating": floating, "orig": raw, "extra": extra, "present": set(kv.keys())}
 
         def remove(_b2):
             self.wr_box.remove(row)
@@ -1919,12 +1923,19 @@ class App(Gtk.Application):
                 if s.startswith("window_rule="):
                     q = pool.get(s)
                     if not q:
+                        out_lines.append(raw)
                         continue
                     e = q.pop(0)
                     app = e["app"].get_text().strip()
                     kv = dict(e.get("extra") or {})
-                    kv["app_id"] = app
-                    kv["is_floating"] = "1" if e["floating"].get_state() else "0"
+                    if app:
+                        kv["app_id"] = app
+                    if "is_floating" in e.get("present", set()) or e["floating"].get_state():
+                        kv["is_floating"] = "1" if e["floating"].get_state() else "0"
+                    elif "is_floating" in kv:
+                        del kv["is_floating"]
+                    if not kv:
+                        continue
                     newline = "window_rule=" + ",".join(f"{k}:{v}" for k, v in kv.items())
                     e["orig"] = newline
                     out_lines.append(newline + "\n")
@@ -1938,7 +1949,8 @@ class App(Gtk.Application):
                     continue
                 kv = dict(e.get("extra") or {})
                 kv["app_id"] = app
-                kv["is_floating"] = "1" if e["floating"].get_state() else "0"
+                if e["floating"].get_state():
+                    kv["is_floating"] = "1"
                 newline = "window_rule=" + ",".join(f"{k}:{v}" for k, v in kv.items())
                 e["orig"] = newline
                 out_lines.append(newline + "\n")
