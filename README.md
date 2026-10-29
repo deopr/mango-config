@@ -139,6 +139,14 @@ mango-config --version
 Tab IDs: `layout`, `theme`, `colors`, `cursor`, `mouse`, `touchpad`, `keys`,
 `outputs`, `rules`.
 
+## Inspiration
+
+This project was inspired by [HyprMod](https://github.com/BlueManCZ/hyprmod), a
+native GTK4 settings app for Hyprland. We liked the idea of giving a Wayland
+compositor a proper, friendly settings GUI, so we built the Mango version:
+`mango-config`, with config auto-discovery, DMS support, and validated,
+reversible applies.
+
 ## Limitations
 
 - `config.toml` is detected but not edited yet. Use `config.conf`.
