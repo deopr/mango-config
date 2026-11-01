@@ -20,7 +20,7 @@ gi.require_version("Gdk", "4.0")
 gi.require_version("Pango", "1.0")
 from gi.repository import Gdk, GLib, Gtk, Pango
 
-VERSION = "0.2.1"
+VERSION = "0.2.2"
 APP_ID = "io.github.deopr.MangoConfig"
 
 DEFAULT_CONFIG_DIR = os.path.abspath(os.path.expanduser(
@@ -982,7 +982,17 @@ class App(Gtk.Application):
             .kb-row { padding: 7px 10px; border-radius: 9px; }
             .kb-row:hover { background: alpha(currentColor, 0.06); }
             .kb-row button { min-height: 26px; padding: 2px 6px; }
+            .kb-bind-group { background: alpha(currentColor, 0.035); }
+            .kb-bind-group:hover { background: alpha(currentColor, 0.06); }
             .kb-action { opacity: 0.85; }
+            .kb-count {
+                background: alpha(currentColor, 0.09);
+                border-radius: 999px;
+                padding: 1px 8px;
+                font-size: 0.78em;
+                opacity: 0.75;
+            }
+            .kb-shortcut { padding: 2px 0; }
             .keycap {
                 background: alpha(currentColor, 0.10);
                 border-radius: 6px;
@@ -2383,7 +2393,7 @@ class App(Gtk.Application):
         self.kb_groups_box.set_hexpand(True)
         box.append(self.kb_groups_box)
 
-        hint = Gtk.Label(label="Click a section to open it — one at a time · use the pencil to edit · Apply only writes what changed")
+        hint = Gtk.Label(label="Click a section to open it — one at a time · each card is one action with as many shortcuts as you need · use the pencil to edit")
         hint.add_css_class("dim-label")
         hint.set_wrap(True)
         hint.set_xalign(0)
@@ -2391,6 +2401,7 @@ class App(Gtk.Application):
 
         self.kb_groups = []
         self.kb_rows = []
+        self.kb_cards = []
         self.kb_new_box = None
         self.kb_new_exp = None
         self.build_kb_rows_from_lines()
@@ -2439,6 +2450,7 @@ class App(Gtk.Application):
 
     def build_kb_rows_from_lines(self):
         self.kb_rows = []
+        self.kb_cards = []
         self.kb_groups = []
         self.kb_expanders = []
         if getattr(self, "kb_groups_box", None) is None:
@@ -2486,10 +2498,18 @@ class App(Gtk.Application):
                 exp.connect("notify::expanded", self._on_kb_expanded)
                 self.kb_expanders.append(exp)
                 first = False
-                inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
                 inner.set_margin_top(4)
+                grouped = []
+                by_signature = {}
                 for line in lines:
-                    self.add_kb_row(line=line, container=inner, section=pretty)
+                    signature = self._kb_identity(line)
+                    if signature not in by_signature:
+                        by_signature[signature] = []
+                        grouped.append(by_signature[signature])
+                    by_signature[signature].append(line)
+                for group_lines in grouped:
+                    self.add_kb_group(lines=group_lines, container=inner, section=pretty)
                 exp.set_child(inner)
                 cat_box.append(exp)
                 self.kb_groups.append((exp, inner, ci))
@@ -2515,7 +2535,11 @@ class App(Gtk.Application):
         if getattr(self, "kb_count", None) is None:
             return
         n = len(getattr(self, "kb_rows", []))
-        self.kb_count.set_label(f"{n} binds")
+        groups = len(getattr(self, "kb_cards", []))
+        if groups == n:
+            self.kb_count.set_label(f"{n} binds")
+        else:
+            self.kb_count.set_label(f"{groups} actions · {n} shortcuts")
 
     def filter_kb(self):
         if getattr(self, "kb_search", None) is None:
@@ -2559,8 +2583,8 @@ class App(Gtk.Application):
                 other.set_expanded(False)
         self._kb_collapsing = False
 
-    def add_kb_row(self, _b=None, line="", container=None, section=""):
-        raw = (line or "").strip()
+    def _kb_parts(self, raw):
+        raw = (raw or "").strip()
         m = self.BIND_RE.match(raw)
         flag = m.group(1) if m else "bind"
         rest = m.group(2) if m else raw
@@ -2569,9 +2593,26 @@ class App(Gtk.Application):
         key = parts[1] if len(parts) > 1 else ""
         action = parts[2] if len(parts) > 2 else ""
         args = parts[3] if len(parts) > 3 else ""
-        # unwrap a doubled prefix left by older buggy saves: bind=bind=...
         while self.BIND_RE.match(mods.strip()):
             mods = self.BIND_RE.match(mods.strip()).group(2)
+        return flag, mods.strip(), key.strip(), action.strip(), args.strip()
+
+    def _kb_identity(self, raw):
+        flag, _mods, _key, action, args = self._kb_parts(raw)
+        return flag, action, args
+
+    def add_kb_row(self, _b=None, line="", container=None, section=""):
+        return self.add_kb_group(
+            _b=_b, lines=[line] if line else [], container=container, section=section)
+
+    def add_kb_group(self, _b=None, lines=None, container=None, section=""):
+        if isinstance(lines, str):
+            lines = [lines]
+        lines = [line.strip() for line in (lines or []) if (line or "").strip()]
+        flag = "bind"
+        action = args = ""
+        if lines:
+            flag, _mods, _key, action, args = self._kb_parts(lines[0])
 
         if container is None:
             container = self.kb_new_box
@@ -2579,50 +2620,91 @@ class App(Gtk.Application):
                 self.kb_new_exp.set_visible(True)
                 self.kb_new_exp.set_expanded(True)
 
-        row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        row.add_css_class("kb-row")
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        card.add_css_class("kb-row")
+        card.add_css_class("kb-bind-group")
         head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        combo = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        combo.set_valign(Gtk.Align.CENTER)
-        combo.set_size_request(196, -1)
+
+        combo_flow = Gtk.FlowBox()
+        combo_flow.set_selection_mode(Gtk.SelectionMode.NONE)
+        combo_flow.set_column_spacing(6)
+        combo_flow.set_row_spacing(4)
+        combo_flow.set_max_children_per_line(12)
+        combo_flow.set_halign(Gtk.Align.START)
+        combo_flow.set_valign(Gtk.Align.CENTER)
+        combo_flow.set_size_request(280, -1)
+
         cmd = Gtk.Label()
         cmd.add_css_class("kb-action")
         cmd.set_xalign(0)
         cmd.set_hexpand(True)
         cmd.set_ellipsize(Pango.EllipsizeMode.END)
+
+        count = Gtk.Label()
+        count.add_css_class("kb-count")
+        count.set_valign(Gtk.Align.CENTER)
+        count.set_visible(False)
+
         edit = Gtk.ToggleButton()
         edit.set_icon_name("document-edit-symbolic")
         edit.add_css_class("flat")
-        edit.set_tooltip_text("Edit this bind")
+        edit.set_tooltip_text("Edit this action and its shortcuts")
         rm = Gtk.Button.new_from_icon_name("user-trash-symbolic")
         rm.add_css_class("flat")
-        rm.set_tooltip_text("Delete this bind")
-        head.append(combo)
-        head.append(cmd)
-        head.append(edit)
+        rm.set_tooltip_text("Delete this action and all of its shortcuts")
 
-        e_mods = self._entry(mods)
-        e_key = self._entry(key)
-        e_act = self._entry(action)
-        e_args = self._entry(args)
-        fields = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        for title, w, width in (("Mods", e_mods, 8), ("Key", e_key, 6), ("Action", e_act, 10), ("Args", e_args, 16)):
-            w.set_width_chars(width)
-            w.set_max_width_chars(width + 10)
-            w.set_hexpand(True)
-            col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-            lbl = Gtk.Label(label=title)
-            lbl.add_css_class("dim-label")
-            lbl.set_xalign(0)
-            col.append(lbl)
-            col.append(w)
-            col.set_hexpand(True)
-            fields.append(col)
-        rm.set_valign(Gtk.Align.END)
-        fields.append(rm)
+        head.append(combo_flow)
+        head.append(cmd)
+        head.append(count)
+        head.append(edit)
+        head.append(rm)
+
         rev = Gtk.Revealer()
         rev.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
-        rev.set_child(fields)
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        body.set_margin_top(2)
+        body.set_margin_bottom(2)
+
+        action_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        e_act = self._entry(action)
+        e_act.set_placeholder_text("spawn")
+        e_args = self._entry(args)
+        e_args.set_placeholder_text("kitty")
+        for title, widget, width in (("Action", e_act, 10), ("Args", e_args, 24)):
+            widget.set_width_chars(width)
+            widget.set_max_width_chars(width + 20)
+            widget.set_hexpand(True)
+            col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            label = Gtk.Label(label=title)
+            label.add_css_class("dim-label")
+            label.set_xalign(0)
+            col.append(label)
+            col.append(widget)
+            col.set_hexpand(True)
+            action_row.append(col)
+        body.append(action_row)
+
+        shortcuts_label = Gtk.Label(label="Shortcuts")
+        shortcuts_label.add_css_class("dim-label")
+        shortcuts_label.set_xalign(0)
+        body.append(shortcuts_label)
+        shortcuts_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        body.append(shortcuts_box)
+
+        add_shortcut_btn = Gtk.Button(label="+ Add shortcut")
+        add_shortcut_btn.set_halign(Gtk.Align.START)
+        add_shortcut_btn.add_css_class("flat")
+        body.append(add_shortcut_btn)
+        rev.set_child(body)
+        card.append(head)
+        card.append(rev)
+
+        group = {
+            "card": card, "combos": [], "e_act": e_act, "e_args": e_args,
+            "flag": flag, "section": section, "cmd": cmd, "flow": combo_flow,
+            "count": count, "shortcuts_box": shortcuts_box, "edit": edit,
+            "revealer": rev, "remove": rm,
+        }
 
         def pretty_key(k):
             k = (k or "").strip()
@@ -2643,47 +2725,142 @@ class App(Gtk.Application):
             keyp = pretty_key(key_str)
             return " + ".join(mods + ([keyp] if keyp else [])) or "—"
 
-        entry = {"row": row, "e_mods": e_mods, "e_key": e_key, "e_act": e_act, "e_args": e_args,
-                 "flag": flag, "orig": raw, "section": section}
+        def clear_flow():
+            child = combo_flow.get_first_child()
+            while child is not None:
+                nxt = child.get_next_sibling()
+                combo_flow.remove(child)
+                child = nxt
 
-        def refresh():
-            combo_txt = friendly(e_mods.get_text(), e_key.get_text())
-            a = e_act.get_text().strip()
-            g = e_args.get_text().strip()
-            cmd_txt = g if a == "spawn" else (f"{a} {g}".strip() or "—")
-            ch = combo.get_first_child()
-            while ch is not None:
-                nxt = ch.get_next_sibling()
-                combo.remove(ch)
-                ch = nxt
-            for part in combo_txt.split(" + "):
-                cap = Gtk.Label(label=part)
-                cap.add_css_class("keycap")
-                combo.append(cap)
+        def refresh(*_args):
+            clear_flow()
+            combo_bits = []
+            for combo in group["combos"]:
+                combo_txt = friendly(combo["e_mods"].get_text(), combo["e_key"].get_text())
+                combo_bits.append(combo_txt)
+                chip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=3)
+                chip.set_valign(Gtk.Align.CENTER)
+                for part in combo_txt.split(" + "):
+                    cap = Gtk.Label(label=part)
+                    cap.add_css_class("keycap")
+                    chip.append(cap)
+                combo_flow.append(chip)
+            action_txt = e_act.get_text().strip()
+            args_txt = e_args.get_text().strip()
+            if action_txt == "spawn":
+                cmd_txt = args_txt or "—"
+            elif action_txt:
+                cmd_txt = (action_txt + " " + args_txt).strip()
+            else:
+                cmd_txt = "New bind"
             cmd.set_label(cmd_txt)
-            combo.set_tooltip_text(combo_txt)
-            cmd.set_tooltip_text(f"{a} {g}".strip())
-            row._search_text = " ".join((e_mods.get_text(), e_key.get_text(), a, g, combo_txt, entry.get("section", ""))).lower()
+            cmd.set_tooltip_text((action_txt + " " + args_txt).strip())
+            count.set_label("%d shortcuts" % len(group["combos"]))
+            count.set_visible(len(group["combos"]) > 1)
+            card._search_text = " ".join((
+                section, action_txt, args_txt, *combo_bits)).lower()
 
-        def remove(_b2=None, entry=entry, row=row):
-            parent = row.get_parent()
+        def remove_group(_b2=None):
+            for combo in list(group["combos"]):
+                parent = combo["editor"].get_parent()
+                if parent is not None:
+                    parent.remove(combo["editor"])
+                if combo in self.kb_rows:
+                    self.kb_rows.remove(combo)
+            group["combos"].clear()
+            parent = card.get_parent()
             if parent is not None:
-                parent.remove(row)
-            if entry in self.kb_rows:
-                self.kb_rows.remove(entry)
+                parent.remove(card)
+            if group in getattr(self, "kb_cards", []):
+                self.kb_cards.remove(group)
             self.update_kb_count()
 
-        rm.connect("clicked", remove)
+        def add_combo(raw=""):
+            if raw:
+                _flag, mods, key, _action, _args = self._kb_parts(raw)
+                orig = raw.strip()
+            else:
+                mods = key = ""
+                orig = ""
+            e_mods = self._entry(mods)
+            e_key = self._entry(key)
+            e_mods.set_width_chars(10)
+            e_key.set_width_chars(8)
+            editor = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            editor.add_css_class("kb-shortcut")
+            for title, widget, width in (("Mods", e_mods, 10), ("Key", e_key, 8)):
+                widget.set_width_chars(width)
+                widget.set_max_width_chars(width + 10)
+                widget.set_hexpand(True)
+                col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                label = Gtk.Label(label=title)
+                label.add_css_class("dim-label")
+                label.set_xalign(0)
+                col.append(label)
+                col.append(widget)
+                col.set_hexpand(True)
+                editor.append(col)
+            rm_combo = Gtk.Button.new_from_icon_name("user-trash-symbolic")
+            rm_combo.add_css_class("flat")
+            rm_combo.set_valign(Gtk.Align.END)
+            rm_combo.set_tooltip_text("Remove this shortcut")
+            editor.append(rm_combo)
+
+            combo = {
+                "group": group, "e_mods": e_mods, "e_key": e_key,
+                "orig": orig, "flag": flag, "section": section,
+                "editor": editor, "remove": rm_combo,
+            }
+
+            def remove_combo(_b3=None):
+                parent = editor.get_parent()
+                if parent is not None:
+                    parent.remove(editor)
+                if combo in group["combos"]:
+                    group["combos"].remove(combo)
+                if combo in self.kb_rows:
+                    self.kb_rows.remove(combo)
+                if not group["combos"]:
+                    remove_group()
+                else:
+                    refresh()
+                    self.update_kb_count()
+
+            rm_combo.connect("clicked", remove_combo)
+            e_mods.connect("changed", refresh)
+            e_key.connect("changed", refresh)
+            group["combos"].append(combo)
+            self.kb_rows.append(combo)
+            shortcuts_box.append(editor)
+            refresh()
+            self.update_kb_count()
+            return combo
+
+        def add_shortcut(_b2=None):
+            combo = add_combo("")
+            edit.set_active(True)
+            rev.set_reveal_child(True)
+            GLib.idle_add(lambda: (combo["e_mods"].grab_focus(), False)[1])
+            return combo
+
+        group["add_shortcut"] = add_shortcut
+        add_shortcut_btn.connect("clicked", add_shortcut)
+        rm.connect("clicked", remove_group)
         edit.connect("toggled", lambda b: rev.set_reveal_child(b.get_active()))
-        for e in (e_mods, e_key, e_act, e_args):
-            e.connect("changed", lambda _e: refresh())
-        row.append(head)
-        row.append(rev)
-        container.append(row)
-        self.kb_rows.append(entry)
+        e_act.connect("changed", refresh)
+        e_args.connect("changed", refresh)
+
+        self.kb_cards.append(group)
+        container.append(card)
+        for raw in lines:
+            add_combo(raw)
+        if not group["combos"]:
+            add_combo("")
+            edit.set_active(True)
+            rev.set_reveal_child(True)
         refresh()
         self.update_kb_count()
-        return entry
+        return group
 
     # ---- load / apply / reset
 
@@ -2904,6 +3081,16 @@ class App(Gtk.Application):
             for e in self.kb_rows:
                 if e.get("orig"):
                     pool.setdefault(e["orig"], []).append(e)
+            # Add new shortcuts next to their existing action, not at the end
+            # of the file where they could change section on the next reload.
+            insert_after = {}
+            for group in getattr(self, "kb_cards", []):
+                new_combos = [c for c in group["combos"] if not c.get("orig")]
+                if not new_combos:
+                    continue
+                orig_combos = [c for c in group["combos"] if c.get("orig")]
+                if orig_combos:
+                    insert_after.setdefault(orig_combos[-1]["orig"], []).extend(new_combos)
             out_lines = []
             for raw in orig_lines:
                 s = raw.strip()
@@ -2916,6 +3103,11 @@ class App(Gtk.Application):
                     if newline:
                         e["orig"] = newline
                         out_lines.append(newline + "\n")
+                    for combo in insert_after.get(s, []):
+                        extra = self._kb_line(combo)
+                        if extra:
+                            combo["orig"] = extra
+                            out_lines.append(extra + "\n")
                 else:
                     out_lines.append(raw)
             for e in self.kb_rows:
@@ -2991,9 +3183,12 @@ class App(Gtk.Application):
         return False
 
     def _kb_line(self, e):
+        group = e.get("group")
+        if group is None:
+            return None
         vals = []
-        for k in ("e_mods", "e_key", "e_act", "e_args"):
-            v = e[k].get_text().strip()
+        for widget in (e["e_mods"], e["e_key"], group["e_act"], group["e_args"]):
+            v = widget.get_text().strip()
             while self.BIND_RE.match(v):
                 v = self.BIND_RE.match(v).group(2).strip()
             vals.append(v)
@@ -3003,7 +3198,8 @@ class App(Gtk.Application):
         parts = [mods, key, action, args]
         while parts and parts[-1] == "":
             parts.pop()
-        line = (e.get("flag") or "bind") + "=" + ",".join(parts)
+        flag = group.get("flag") or e.get("flag") or "bind"
+        line = flag + "=" + ",".join(parts)
         return line if len(line.encode("utf-8")) <= 255 else None
 
     def _validate_config(self):

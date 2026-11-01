@@ -43,8 +43,10 @@ touch. Every Apply is validated and backed up.
   height, monitor, tags and effects (blur, border, shadow, radius, animation).
   A collapsible help card explains every field; unknown keys and untracked
   rules are preserved.
-- **Keybinds** — searchable, grouped by compositor vs apps, keycap-style combos
-  with per-bind editing.
+- **Keybinds** — searchable, grouped by compositor vs apps, keycap-style combos.
+  Each action card can hold multiple shortcuts (for example `Super+Return` and
+  `Super+T` for kitty); add or remove shortcuts, and edit the action or args
+  once for the whole group.
 - **Display guard** — after an output change, an inline 10-second countdown
   asks you to keep or revert. If the timer runs out, it reverts automatically.
 

@@ -50,6 +50,10 @@ def run_one(profile_dir, label):
     if mc.WINDOWRULES and os.path.isfile(mc.WINDOWRULES):
         with open(mc.WINDOWRULES, "a", encoding="utf-8") as fh:
             fh.write("window_rule=app_id:^(unknown-key-test)$,is_floating:1,future_setting:keep\n")
+    if mc.BINDS and os.path.isfile(mc.BINDS):
+        with open(mc.BINDS, "a", encoding="utf-8") as fh:
+            fh.write("bind=SUPER,T,spawn,group-test\n")
+            fh.write("bind=SUPER,Y,spawn,group-test\n")
     before_hash = digest(profile_dir)
     before_counts = counts(profile_dir)
 
@@ -106,6 +110,29 @@ def run_one(profile_dir, label):
         stable_hash = digest(profile_dir)
         app.on_apply(None)
         assert digest(profile_dir) == stable_hash, "%s: rule Apply is not stable" % label
+
+    test_groups = [g for g in getattr(app, "kb_cards", [])
+                   if g["e_act"].get_text() == "spawn"
+                   and g["e_args"].get_text() == "group-test"]
+    assert len(test_groups) == 1, "%s: duplicate keybind actions were not grouped" % label
+    test_group = test_groups[0]
+    assert len(test_group["combos"]) == 2, "%s: grouped shortcuts missing" % label
+    added = test_group["add_shortcut"]()
+    added["e_mods"].set_text("SUPER")
+    added["e_key"].set_text("P")
+    test_group["combos"][0]["remove"].emit("clicked")
+    app.on_apply(None)
+    bind_text = open(mc.BINDS, encoding="utf-8").read()
+    grouped_lines = [line for line in bind_text.splitlines()
+                     if line.startswith("bind=") and line.endswith("spawn,group-test")]
+    assert len(grouped_lines) == 2, "%s: grouped shortcut edit did not save" % label
+    assert "bind=SUPER,P,spawn,group-test" in grouped_lines, "%s: added shortcut missing" % label
+    assert counts(profile_dir)["binds"] == before_counts["binds"], (
+        "%s: grouped bind count changed: before=%r after=%r lines=%r" %
+        (label, before_counts, counts(profile_dir), grouped_lines))
+    stable_hash = digest(profile_dir)
+    app.on_apply(None)
+    assert digest(profile_dir) == stable_hash, "%s: grouped bind Apply is not stable" % label
 
     expected_counts = counts(profile_dir)
     target = next((c for c in app.controls if c["key"] == "border_radius"), None)

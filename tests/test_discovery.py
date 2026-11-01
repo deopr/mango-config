@@ -71,7 +71,7 @@ with tempfile.TemporaryDirectory() as td:
     check("missing optional source: inline layout wins", r["layout"] == "config.conf", str(r))
 
 out = subprocess.run([sys.executable, APP, "--version"], capture_output=True, text=True)
-check("CLI version", out.returncode == 0 and out.stdout.strip() == "mango-config 0.2.1",
+check("CLI version", out.returncode == 0 and out.stdout.strip() == "mango-config 0.2.2",
       out.stdout + out.stderr)
 out = subprocess.run([sys.executable, APP, "--help"], capture_output=True, text=True)
 check("CLI help", out.returncode == 0 and "--config-dir" in out.stdout and "--tab" in out.stdout)

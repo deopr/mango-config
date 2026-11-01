@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.2 — 2026-10-31
+
+Group multiple shortcuts under one action.
+
+- Keybinds with the same action and args now appear once as a single card,
+  showing every key combo plus a shortcut count. For example, `Super+Return`
+  and `Super+T` for kitty no longer need two separate rows.
+- Each card can add or remove shortcuts and edit the shared action/args in
+  place. Newly added shortcuts are inserted beside their action instead of at
+  the end of the file.
+- Keybind search and counts understand actions versus shortcuts, and the
+  updated screenshot shows the grouped layout.
+- GUI tests cover grouping, adding/removing a shortcut, insertion order and
+  stable repeat Apply.
+
 ## 0.2.1 — 2026-10-31
 
 Restore the expanded window-rule editor.
