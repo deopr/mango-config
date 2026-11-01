@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.3 — 2026-10-31
+
+Full three- and four-key chords.
+
+- The shortcut editor now uses one **Combo** field. Type the whole chord
+  directly, such as `SUPER+CTRL+P` or `SUPER+SHIFT+ALT+T`; the app splits it
+  into modifiers and the final key when writing the config.
+- Keycap summaries and search render every modifier, so three- and four-key
+  chords stay visible on the grouped action card.
+- Existing one- and two-key bindings still round-trip without being rewritten,
+  including bindings with no modifiers.
+- Tests now cover loading, adding and preserving three- and four-key chords,
+  plus stable repeat Apply.
+
 ## 0.2.2 — 2026-10-31
 
 Group multiple shortcuts under one action.

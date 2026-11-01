@@ -52,8 +52,9 @@ def run_one(profile_dir, label):
             fh.write("window_rule=app_id:^(unknown-key-test)$,is_floating:1,future_setting:keep\n")
     if mc.BINDS and os.path.isfile(mc.BINDS):
         with open(mc.BINDS, "a", encoding="utf-8") as fh:
-            fh.write("bind=SUPER,T,spawn,group-test\n")
-            fh.write("bind=SUPER,Y,spawn,group-test\n")
+            fh.write("bind=,F9,spawn,no-mod-test\n")
+            fh.write("bind=SUPER+CTRL,P,spawn,group-test\n")
+            fh.write("bind=SUPER+SHIFT+ALT,T,spawn,group-test\n")
     before_hash = digest(profile_dir)
     before_counts = counts(profile_dir)
 
@@ -117,16 +118,20 @@ def run_one(profile_dir, label):
     assert len(test_groups) == 1, "%s: duplicate keybind actions were not grouped" % label
     test_group = test_groups[0]
     assert len(test_group["combos"]) == 2, "%s: grouped shortcuts missing" % label
+    assert {c["e_combo"].get_text() for c in test_group["combos"]} == {
+        "SUPER+CTRL+P", "SUPER+SHIFT+ALT+T"}, "%s: multi-key chords were not loaded" % label
     added = test_group["add_shortcut"]()
-    added["e_mods"].set_text("SUPER")
-    added["e_key"].set_text("P")
+    added["e_combo"].set_text("SUPER+CTRL+ALT+K")
     test_group["combos"][0]["remove"].emit("clicked")
     app.on_apply(None)
     bind_text = open(mc.BINDS, encoding="utf-8").read()
     grouped_lines = [line for line in bind_text.splitlines()
                      if line.startswith("bind=") and line.endswith("spawn,group-test")]
     assert len(grouped_lines) == 2, "%s: grouped shortcut edit did not save" % label
-    assert "bind=SUPER,P,spawn,group-test" in grouped_lines, "%s: added shortcut missing" % label
+    assert "bind=SUPER+SHIFT+ALT,T,spawn,group-test" in grouped_lines, (
+        "%s: four-key chord was not preserved" % label)
+    assert "bind=SUPER+CTRL+ALT,K,spawn,group-test" in grouped_lines, (
+        "%s: four-key shortcut was not added" % label)
     assert counts(profile_dir)["binds"] == before_counts["binds"], (
         "%s: grouped bind count changed: before=%r after=%r lines=%r" %
         (label, before_counts, counts(profile_dir), grouped_lines))

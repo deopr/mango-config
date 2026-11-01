@@ -20,7 +20,7 @@ gi.require_version("Gdk", "4.0")
 gi.require_version("Pango", "1.0")
 from gi.repository import Gdk, GLib, Gtk, Pango
 
-VERSION = "0.2.2"
+VERSION = "0.2.3"
 APP_ID = "io.github.deopr.MangoConfig"
 
 DEFAULT_CONFIG_DIR = os.path.abspath(os.path.expanduser(
@@ -2539,7 +2539,9 @@ class App(Gtk.Application):
         if groups == n:
             self.kb_count.set_label(f"{n} binds")
         else:
-            self.kb_count.set_label(f"{groups} actions · {n} shortcuts")
+            action_word = "action" if groups == 1 else "actions"
+            shortcut_word = "shortcut" if n == 1 else "shortcuts"
+            self.kb_count.set_label(f"{groups} {action_word} · {n} {shortcut_word}")
 
     def filter_kb(self):
         if getattr(self, "kb_search", None) is None:
@@ -2600,6 +2602,22 @@ class App(Gtk.Application):
     def _kb_identity(self, raw):
         flag, _mods, _key, action, args = self._kb_parts(raw)
         return flag, action, args
+
+    def _kb_combo(self, mods, key):
+        mods = (mods or "").strip()
+        key = (key or "").strip()
+        if mods and key:
+            return mods + "+" + key
+        return key or mods
+
+    def _kb_combo_parts(self, text):
+        text = (text or "").strip()
+        while self.BIND_RE.match(text):
+            text = self.BIND_RE.match(text).group(2).strip()
+        if "+" in text:
+            mods, key = text.rsplit("+", 1)
+            return mods.strip(), key.strip()
+        return "", text.strip()
 
     def add_kb_row(self, _b=None, line="", container=None, section=""):
         return self.add_kb_group(
@@ -2684,7 +2702,7 @@ class App(Gtk.Application):
             action_row.append(col)
         body.append(action_row)
 
-        shortcuts_label = Gtk.Label(label="Shortcuts")
+        shortcuts_label = Gtk.Label(label="Shortcuts  ·  type the full chord, e.g. SUPER+CTRL+P")
         shortcuts_label.add_css_class("dim-label")
         shortcuts_label.set_xalign(0)
         body.append(shortcuts_label)
@@ -2735,9 +2753,13 @@ class App(Gtk.Application):
         def refresh(*_args):
             clear_flow()
             combo_bits = []
+            raw_combos = []
             for combo in group["combos"]:
-                combo_txt = friendly(combo["e_mods"].get_text(), combo["e_key"].get_text())
+                raw_combo = combo["e_combo"].get_text().strip()
+                mods, key = self._kb_combo_parts(raw_combo)
+                combo_txt = friendly(mods, key)
                 combo_bits.append(combo_txt)
+                raw_combos.append(raw_combo)
                 chip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=3)
                 chip.set_valign(Gtk.Align.CENTER)
                 for part in combo_txt.split(" + "):
@@ -2758,7 +2780,7 @@ class App(Gtk.Application):
             count.set_label("%d shortcuts" % len(group["combos"]))
             count.set_visible(len(group["combos"]) > 1)
             card._search_text = " ".join((
-                section, action_txt, args_txt, *combo_bits)).lower()
+                section, action_txt, args_txt, *combo_bits, *raw_combos)).lower()
 
         def remove_group(_b2=None):
             for combo in list(group["combos"]):
@@ -2782,24 +2804,23 @@ class App(Gtk.Application):
             else:
                 mods = key = ""
                 orig = ""
-            e_mods = self._entry(mods)
-            e_key = self._entry(key)
-            e_mods.set_width_chars(10)
-            e_key.set_width_chars(8)
+            e_combo = self._entry(self._kb_combo(mods, key))
+            e_combo.set_placeholder_text("SUPER+CTRL+P")
+            e_combo.set_tooltip_text(
+                "Type the full chord: SUPER+CTRL+P or SUPER+SHIFT+ALT+T")
+            e_combo.set_width_chars(24)
+            e_combo.set_max_width_chars(64)
+            e_combo.set_hexpand(True)
             editor = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
             editor.add_css_class("kb-shortcut")
-            for title, widget, width in (("Mods", e_mods, 10), ("Key", e_key, 8)):
-                widget.set_width_chars(width)
-                widget.set_max_width_chars(width + 10)
-                widget.set_hexpand(True)
-                col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-                label = Gtk.Label(label=title)
-                label.add_css_class("dim-label")
-                label.set_xalign(0)
-                col.append(label)
-                col.append(widget)
-                col.set_hexpand(True)
-                editor.append(col)
+            col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            label = Gtk.Label(label="Combo")
+            label.add_css_class("dim-label")
+            label.set_xalign(0)
+            col.append(label)
+            col.append(e_combo)
+            col.set_hexpand(True)
+            editor.append(col)
             rm_combo = Gtk.Button.new_from_icon_name("user-trash-symbolic")
             rm_combo.add_css_class("flat")
             rm_combo.set_valign(Gtk.Align.END)
@@ -2807,7 +2828,7 @@ class App(Gtk.Application):
             editor.append(rm_combo)
 
             combo = {
-                "group": group, "e_mods": e_mods, "e_key": e_key,
+                "group": group, "e_combo": e_combo,
                 "orig": orig, "flag": flag, "section": section,
                 "editor": editor, "remove": rm_combo,
             }
@@ -2827,8 +2848,7 @@ class App(Gtk.Application):
                     self.update_kb_count()
 
             rm_combo.connect("clicked", remove_combo)
-            e_mods.connect("changed", refresh)
-            e_key.connect("changed", refresh)
+            e_combo.connect("changed", refresh)
             group["combos"].append(combo)
             self.kb_rows.append(combo)
             shortcuts_box.append(editor)
@@ -2840,7 +2860,7 @@ class App(Gtk.Application):
             combo = add_combo("")
             edit.set_active(True)
             rev.set_reveal_child(True)
-            GLib.idle_add(lambda: (combo["e_mods"].grab_focus(), False)[1])
+            GLib.idle_add(lambda: (combo["e_combo"].grab_focus(), False)[1])
             return combo
 
         group["add_shortcut"] = add_shortcut
@@ -3186,13 +3206,16 @@ class App(Gtk.Application):
         group = e.get("group")
         if group is None:
             return None
-        vals = []
-        for widget in (e["e_mods"], e["e_key"], group["e_act"], group["e_args"]):
-            v = widget.get_text().strip()
-            while self.BIND_RE.match(v):
-                v = self.BIND_RE.match(v).group(2).strip()
-            vals.append(v)
-        mods, key, action, args = vals
+        combo = e["e_combo"].get_text().strip()
+        while self.BIND_RE.match(combo):
+            combo = self.BIND_RE.match(combo).group(2).strip()
+        mods, key = self._kb_combo_parts(combo)
+        action = group["e_act"].get_text().strip()
+        args = group["e_args"].get_text().strip()
+        while self.BIND_RE.match(action):
+            action = self.BIND_RE.match(action).group(2).strip()
+        while self.BIND_RE.match(args):
+            args = self.BIND_RE.match(args).group(2).strip()
         if not key or not action:
             return None
         parts = [mods, key, action, args]

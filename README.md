@@ -46,7 +46,8 @@ touch. Every Apply is validated and backed up.
 - **Keybinds** — searchable, grouped by compositor vs apps, keycap-style combos.
   Each action card can hold multiple shortcuts (for example `Super+Return` and
   `Super+T` for kitty); add or remove shortcuts, and edit the action or args
-  once for the whole group.
+  once for the whole group. Shortcuts use one Combo field, so full chords such
+  as `Super+Ctrl+P` and `Super+Shift+Alt+T` work directly.
 - **Display guard** — after an output change, an inline 10-second countdown
   asks you to keep or revert. If the timer runs out, it reverts automatically.
 

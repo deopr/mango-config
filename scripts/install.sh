@@ -2,7 +2,7 @@
 # mango-config installer — user-level, no sudo.
 set -euo pipefail
 
-VERSION="0.2.2"
+VERSION="0.2.3"
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 SRC="$ROOT/mango-config"
