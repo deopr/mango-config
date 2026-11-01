@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.3.0 — 2026-11-01
+
+Brightness, default apps, and wallpaper fitting.
+
+- New **Brightness** page under Display: a live 0–100 slider backed by a local
+  `light-brightness` helper, `brightnessctl`, `light`, or a writable sysfs
+  backlight. It reports the active backend and never edits the Mango config.
+- New **Default apps** page under Behavior: choose the terminal, file manager
+  and web browser for XDG links and folders. It writes
+  `~/.config/mimeapps.list`, preserves other entries, and backs the file up
+  first. Mango keybinds are left alone.
+- Wallpaper now supports Fill, Fit, Stretch, Center and Tile, plus 90° rotation
+  and horizontal/vertical flips. The preview uses the monitor shape, and the
+  selected fit is baked into a monitor-sized image before applying, so portrait
+  or mismatched images no longer surprise you.
+- Fuzzel quick pick and normal wallpaper apply now share the same fit/render
+  path. Wallpaper options are remembered between launches.
+- Tests cover desktop-entry/mimeapps editing, brightness parsing, wallpaper
+  options, all fit modes, rotation/flips, and an end-to-end wallpaper apply
+  through a fake helper.
+
 ## 0.2.3 — 2026-10-31
 
 Full three- and four-key chords.

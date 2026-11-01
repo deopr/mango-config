@@ -16,8 +16,10 @@ touch. Every Apply is validated and backed up.
 | ![Theme colors](docs/screenshots/theme-colors.png) | ![Base colors](docs/screenshots/base-colors.png) |
 | **Outputs** | **Keybinds** |
 | ![Outputs](docs/screenshots/outputs.png) | ![Keybinds](docs/screenshots/keybinds.png) |
-| **Wallpaper** | **Night light** |
-| ![Wallpaper](docs/screenshots/wallpaper.png) | ![Night light](docs/screenshots/night-light.png) |
+| **Wallpaper** | **Brightness** |
+| ![Wallpaper](docs/screenshots/wallpaper.png) | ![Brightness](docs/screenshots/brightness.png) |
+| **Default apps** | **Night light** |
+| ![Default apps](docs/screenshots/default-apps.png) | ![Night light](docs/screenshots/night-light.png) |
 | **Window rules** | |
 | ![Window rules](docs/screenshots/window-rules.png) | The collapsible help card, app matching, geometry, tags and effect toggles. |
 
@@ -30,10 +32,21 @@ touch. Every Apply is validated and backed up.
   takes effect.
 - **Cursor, mouse and touchpad** — size, theme, acceleration, scrolling,
   tapping and gesture options.
-- **Wallpaper** — names on the left, a live preview on the right, search and a
-  current-wallpaper marker. Uses `light-wallpaper` when available (palette
+- **Wallpaper** — names on the left, a monitor-shaped live preview on the
+  right, search and a current-wallpaper marker. Choose Fill, Fit, Stretch,
+  Center or Tile, rotate in 90° steps, and flip horizontally or vertically.
+  The fit is baked into a monitor-sized image so `swaybg` and the color helper
+  display the same result. Uses `light-wallpaper` when available (palette
   sync), otherwise starts `swaybg`. A Fuzzel quick pick is included as an
   optional text-only shortcut.
+- **Brightness** — a live slider under Display for this session. It prefers a
+  local `light-brightness` helper (DDC/CI monitors), then `brightnessctl`,
+  `light`, or a writable sysfs backlight. Nothing is written to the Mango
+  config.
+- **Default apps** — choose the terminal, file manager and web browser used for
+  XDG links and folders. Saves to `~/.config/mimeapps.list`, preserves other
+  associations, and backs up the existing file first. It does not rewrite
+  Mango keybinds.
 - **Outputs** — detected monitors, multiple `monitor_rule` entries, resolution,
   refresh rate, scale, position, transform, VRR, HDR, primary and Custom mode.
 - **Night light** — live `gammastep` control under Display: enable, set a color
@@ -51,9 +64,9 @@ touch. Every Apply is validated and backed up.
 - **Display guard** — after an output change, an inline 10-second countdown
   asks you to keep or revert. If the timer runs out, it reverts automatically.
 
-The Wallpaper and Night light pages apply immediately with their own buttons.
-They do not edit the Mango config and are intentionally outside the global
-Apply-and-reload flow.
+Wallpaper, Brightness and Night light are separate from the global Apply flow.
+Wallpaper and Default apps write their own state outside the Mango config;
+Brightness and Night light are session-only.
 
 ## Requirements
 
@@ -67,6 +80,9 @@ Optional, for the extra pages:
 - `swaybg` — Wallpaper page fallback. If `light-wallpaper` is on `PATH`, the
   app calls it instead so palette/shell sync keeps working.
 - `fuzzel` — text-only Wallpaper quick pick.
+- `light-brightness`, `brightnessctl` or `light` — Brightness page. A writable
+  `/sys/class/backlight` device also works without an extra tool.
+- GdkPixbuf, normally installed with GTK, is used for wallpaper fitting.
 
 Install the toolkit on your distro:
 
@@ -165,7 +181,9 @@ Output changes additionally show the inline keep/revert guard.
 ```bash
 mango-config                      # normal launch
 mango-config --tab keys           # open a tab directly
-mango-config --tab wallpaper      # names + live preview picker
+mango-config --tab wallpaper      # names + fit options + live preview
+mango-config --tab brightness     # screen brightness slider
+mango-config --tab apps           # default terminal/file manager/browser
 mango-config --tab night          # gammastep night light controls
 mango-config --config-dir ~/dotfiles/mango
 mango-config --no-reload          # write and validate only
@@ -173,7 +191,7 @@ mango-config --version
 ```
 
 Tab IDs: `layout`, `theme`, `colors`, `cursor`, `wallpaper`, `mouse`,
-`touchpad`, `keys`, `outputs`, `night`, `rules`.
+`touchpad`, `keys`, `outputs`, `brightness`, `night`, `apps`, `rules`.
 
 ## Inspiration
 
@@ -192,8 +210,11 @@ reversible applies.
   tools. Override the values in a later source file if you need them permanent.
 - The app edits text, not semantics: keep comments and unusual keys where they
   are, but always review the diff if you hand-edit around it.
-- Night light is session-only. It does not create an autostart service; configure
-  `gammastep` for login/schedule behavior if you need it permanent.
+- Night light and Brightness are session-only. They do not create autostart
+  services; configure `gammastep` and your brightness tool for login behavior
+  if you need it permanent.
+- Wallpaper fitting targets the first monitor and the current monitor size.
+  Re-apply after changing resolution or moving to a different monitor.
 - Fuzzel is text-only, so the image preview lives in the Wallpaper page. The
   Fuzzel quick pick is there for keyboard-first use.
 

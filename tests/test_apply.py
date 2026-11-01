@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from importlib.machinery import SourceFileLoader
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -66,8 +67,17 @@ def run_one(profile_dir, label):
 
     assert hasattr(app, "wall_list") and app.wall_list is not None, "%s: wallpaper page missing" % label
     assert hasattr(app, "wall_search"), "%s: wallpaper search missing" % label
+    assert hasattr(app, "wall_mode") and hasattr(app, "wall_rotate"), (
+        "%s: wallpaper fit controls missing" % label)
+    assert hasattr(app, "wall_flip_h") and hasattr(app, "wall_flip_v"), (
+        "%s: wallpaper flip controls missing" % label)
     assert hasattr(app, "night_scale"), "%s: night light page missing" % label
     assert hasattr(app, "night_apply"), "%s: night light apply missing" % label
+    assert hasattr(app, "bright_scale"), "%s: brightness page missing" % label
+    assert hasattr(app, "bright_refresh"), "%s: brightness refresh missing" % label
+    assert hasattr(app, "app_dropdowns") and len(app.app_dropdowns) == 3, (
+        "%s: default app preferences missing" % label)
+    assert hasattr(app, "apps_apply"), "%s: default apps save button missing" % label
 
     app.on_apply(None)
     hash1 = digest(profile_dir)
@@ -156,6 +166,73 @@ def run_one(profile_dir, label):
     print("ok - %s (stable, edits persist, rows intact)" % label)
 
 
+def test_wallpaper_apply():
+    """A wallpaper apply renders the fit options, then calls the helper."""
+    mc = SourceFileLoader("mango_config_wall_apply", APP).load_module()
+    if mc.GdkPixbuf is None:
+        print("ok - wallpaper apply skipped (GdkPixbuf unavailable)")
+        return
+    with tempfile.TemporaryDirectory() as td:
+        wall_dir = os.path.join(td, "wallpapers")
+        state_dir = os.path.join(td, "state")
+        os.makedirs(wall_dir)
+        os.makedirs(state_dir)
+        source = os.path.join(wall_dir, "test.png")
+        pb = mc.GdkPixbuf.Pixbuf.new(mc.GdkPixbuf.Colorspace.RGB, False, 8, 120, 60)
+        pb.fill(0x33aa88ff)
+        mc._save_wallpaper_pixbuf(pb, source)
+        log = os.path.join(td, "helper.log")
+        helper = os.path.join(td, "helper.py")
+        with open(helper, "w", encoding="utf-8") as fh:
+            fh.write("#!/usr/bin/env python3\n"
+                     "import sys\n"
+                     "open(%r, 'w', encoding='utf-8').write('\\n'.join(sys.argv[1:]))\n" % log)
+        os.chmod(helper, 0o755)
+
+        mc.WALLPAPER_DIR = wall_dir
+        mc.WALLPAPER_STATE = os.path.join(state_dir, "wallpaper")
+        mc.WALLPAPER_OPTIONS = os.path.join(state_dir, "wallpaper-options.json")
+        mc.WALLPAPER_RENDERED = os.path.join(state_dir, "wallpaper-rendered.png")
+        mc.WALLPAPER_LINK = os.path.join(state_dir, "wall-current")
+        mc.APP_STATE_DIR = state_dir
+        mc.DEFAULT_APPS_FILE = os.path.join(td, "mimeapps.list")
+        mc._light_wallpaper = lambda: helper
+        mc._brightness_probe = lambda: (None, None, "test mode")
+        mc.APP_ID = "io.github.deopr.MangoConfigWallTest"
+
+        profile_dir = os.path.join(td, "config")
+        shutil.copytree(os.path.join(FIX, "flat"), profile_dir)
+        prof = mc.discover_profile(profile_dir)
+        mc.configure_profile(prof)
+        app = mc.App(profile=prof, tab="wallpaper", no_reload=True)
+        app.register(None)
+        app.do_activate()
+        assert app.wall_rows, "wallpaper list did not see the test image"
+        app.wall_list.select_row(app.wall_rows[0])
+        app.wall_mode.set_selected(2)  # Stretch
+        app._apply_wallpaper(source)
+
+        ctx = mc.GLib.MainContext.default()
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            while ctx.pending():
+                ctx.iteration(False)
+            if os.path.isfile(log) and os.path.isfile(mc.WALLPAPER_STATE):
+                break
+            time.sleep(0.02)
+        assert os.path.isfile(log), "wallpaper helper was not called"
+        called = open(log, encoding="utf-8").read().strip()
+        assert called == mc.WALLPAPER_RENDERED, (
+            "wallpaper helper received the wrong path: %r" % called)
+        assert os.path.isfile(mc.WALLPAPER_RENDERED), "rendered wallpaper missing"
+        assert open(mc.WALLPAPER_STATE, encoding="utf-8").read().strip() == source
+        options = mc._wallpaper_options()
+        assert options["mode"] == "stretch" and options["source"] == source
+        assert mc._current_wallpaper_source() == source
+        app.win.destroy()
+        print("ok - wallpaper apply renders options and calls helper")
+
+
 def main():
     if len(sys.argv) == 2:
         run_one(sys.argv[1], os.path.basename(sys.argv[1].rstrip("/")))
@@ -165,6 +242,7 @@ def main():
             dest = os.path.join(td, name)
             shutil.copytree(os.path.join(FIX, name), dest)
             subprocess.run([sys.executable, __file__, dest], check=True)
+    test_wallpaper_apply()
     print("\nAll apply tests passed.")
     return 0
 

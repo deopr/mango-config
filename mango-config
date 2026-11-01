@@ -2,8 +2,9 @@
 # mango-config — a friendly GTK4 settings app for the Mango Wayland compositor.
 # Edits only the files your config.conf actually sources, validates with
 # `mango -p`, keeps timestamped backups, and reloads through Mango's IPC socket.
-# Optional Wallpaper and Night light pages talk to swaybg/light-wallpaper and
-# gammastep without touching the Mango config.
+# Optional Wallpaper, Brightness, Default apps and Night light pages use
+# swaybg/light-wallpaper, brightness tools, XDG mimeapps and gammastep without
+# touching the Mango config.
 import argparse
 import json
 import os
@@ -19,8 +20,13 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 gi.require_version("Pango", "1.0")
 from gi.repository import Gdk, GLib, Gtk, Pango
+try:
+    gi.require_version("GdkPixbuf", "2.0")
+    from gi.repository import GdkPixbuf
+except (ImportError, ValueError):
+    GdkPixbuf = None
 
-VERSION = "0.2.3"
+VERSION = "0.3.0"
 APP_ID = "io.github.deopr.MangoConfig"
 
 DEFAULT_CONFIG_DIR = os.path.abspath(os.path.expanduser(
@@ -30,8 +36,43 @@ APP_STATE_DIR = os.path.join(
     "mango-config")
 NIGHT_STATE = os.path.join(APP_STATE_DIR, "nightlight.json")
 WALLPAPER_STATE = os.path.join(APP_STATE_DIR, "wallpaper")
+WALLPAPER_OPTIONS = os.path.join(APP_STATE_DIR, "wallpaper-options.json")
+WALLPAPER_RENDERED = os.path.join(APP_STATE_DIR, "wallpaper-rendered.png")
 WALLPAPER_LINK = os.path.expanduser("~/.config/wall/current")
 NIGHT_FALLBACK_TEMP = 3500
+DEFAULT_APPS_FILE = os.path.join(
+    os.path.abspath(os.path.expanduser(
+        os.environ.get("XDG_CONFIG_HOME") or "~/.config")), "mimeapps.list")
+WALLPAPER_MODES = ("fill", "fit", "stretch", "center", "tile")
+WALLPAPER_MODE_LABELS = {
+    "fill": "Fill (crop edges)",
+    "fit": "Fit (letterbox)",
+    "stretch": "Stretch (distort)",
+    "center": "Center (original size)",
+    "tile": "Tile",
+}
+TERMINAL_DESKTOP_IDS = {
+    "kitty.desktop", "org.kde.konsole.desktop", "alacritty.desktop",
+    "foot.desktop", "org.gnome.Console.desktop", "gnome-terminal.desktop",
+    "xfce4-terminal.desktop", "xterm.desktop", "wezterm.desktop",
+}
+FILE_MANAGER_DESKTOP_IDS = {
+    "org.gnome.Nautilus.desktop", "nautilus.desktop", "dolphin.desktop",
+    "org.kde.dolphin.desktop", "thunar.desktop", "pcmanfm.desktop",
+    "org.gnome.Files.desktop", "nemo.desktop", "caja.desktop",
+}
+BROWSER_DESKTOP_IDS = {
+    "firefox.desktop", "firefox-esr.desktop", "chromium.desktop",
+    "google-chrome.desktop", "brave-browser.desktop", "org.mozilla.firefox.desktop",
+    "app.zen_browser.zen.desktop",
+}
+DEFAULT_APP_ROLES = (
+    ("terminal", "Terminal", ("x-scheme-handler/terminal",), "terminal"),
+    ("files", "File manager", ("inode/directory", "x-scheme-handler/file",
+                               "x-scheme-handler/sftp"), "files"),
+    ("browser", "Web browser", ("x-scheme-handler/http", "x-scheme-handler/https",
+                                "text/html", "application/xhtml+xml"), "browser"),
+)
 
 # Filled in by configure_profile() before the UI is built.
 CONFIG_DIR = DEFAULT_CONFIG_DIR
@@ -224,6 +265,361 @@ def _light_wallpaper():
     return None
 
 
+def _wallpaper_options():
+    data = _read_json(WALLPAPER_OPTIONS)
+    mode = str(data.get("mode", "fill")).lower()
+    if mode not in WALLPAPER_MODES:
+        mode = "fill"
+    try:
+        rotation = int(data.get("rotation", 0))
+    except (TypeError, ValueError):
+        rotation = 0
+    if rotation not in (0, 90, 180, 270):
+        rotation = 0
+    source = data.get("source")
+    if not isinstance(source, str):
+        source = ""
+    rendered = data.get("rendered")
+    if not isinstance(rendered, str):
+        rendered = ""
+    return {
+        "mode": mode,
+        "rotation": rotation,
+        "flip_h": bool(data.get("flip_h", False)),
+        "flip_v": bool(data.get("flip_v", False)),
+        "source": source,
+        "rendered": rendered,
+    }
+
+
+def _save_wallpaper_options(**updates):
+    data = _wallpaper_options()
+    data.update(updates)
+    _write_json(WALLPAPER_OPTIONS, data)
+    return data
+
+
+def _current_wallpaper_source():
+    options = _wallpaper_options()
+    source = options.get("source") or ""
+    rendered = options.get("rendered") or ""
+    link = _current_wallpaper()
+    try:
+        if link and rendered and os.path.realpath(link) == os.path.realpath(rendered):
+            if source and os.path.isfile(source):
+                return source
+        elif link and (not rendered or os.path.realpath(link) != os.path.realpath(rendered)):
+            # An external picker or helper changed the link.
+            return link
+    except OSError:
+        pass
+    if source and os.path.isfile(source):
+        return source
+    return link
+
+
+def _display_size():
+    try:
+        disp = Gdk.Display.get_default()
+        monitors = disp.get_monitors() if disp is not None else None
+        if monitors is not None and monitors.get_n_items() > 0:
+            mon = monitors.get_item(0)
+            geom = mon.get_geometry()
+            scale = mon.get_scale_factor() or 1
+            width = max(1, int(geom.width * scale))
+            height = max(1, int(geom.height * scale))
+            if width > 1 and height > 1:
+                return width, height
+    except Exception:
+        pass
+    return 1920, 1080
+
+
+def _fit_target_size(width, height, max_width, max_height):
+    width = max(1, int(width))
+    height = max(1, int(height))
+    ratio = min(max_width / float(width), max_height / float(height), 1.0)
+    return max(1, int(round(width * ratio))), max(1, int(round(height * ratio)))
+
+
+def _compose_wallpaper(pb, mode, rotation, flip_h, flip_v, width, height):
+    """Return a pixbuf composited for the requested mode and screen size."""
+    if GdkPixbuf is None:
+        raise RuntimeError("GdkPixbuf is not available")
+    if mode not in WALLPAPER_MODES:
+        mode = "fill"
+    if rotation == 90:
+        pb = pb.rotate_simple(GdkPixbuf.PixbufRotation.CLOCKWISE)
+    elif rotation == 180:
+        pb = pb.rotate_simple(GdkPixbuf.PixbufRotation.UPSIDEDOWN)
+    elif rotation == 270:
+        pb = pb.rotate_simple(GdkPixbuf.PixbufRotation.COUNTERCLOCKWISE)
+    if flip_h:
+        pb = pb.flip(True)
+    if flip_v:
+        pb = pb.flip(False)
+    w, h = pb.get_width(), pb.get_height()
+    W, H = max(1, int(width)), max(1, int(height))
+    canvas = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, True, 8, W, H)
+    canvas.fill(0x000000ff)
+    interp = GdkPixbuf.InterpType.BILINEAR
+    if mode == "stretch":
+        scaled = pb.scale_simple(W, H, interp)
+        scaled.composite(canvas, 0, 0, W, H, 0, 0, 1, 1, interp, 255)
+    elif mode == "fill":
+        if w * H > h * W:
+            crop_w, crop_h = max(1, int(round(h * W / float(H)))), h
+        else:
+            crop_w, crop_h = w, max(1, int(round(w * H / float(W))))
+        crop = pb.new_subpixbuf((w - crop_w) // 2, (h - crop_h) // 2,
+                                crop_w, crop_h)
+        scaled = crop.scale_simple(W, H, interp)
+        scaled.composite(canvas, 0, 0, W, H, 0, 0, 1, 1, interp, 255)
+    elif mode == "fit":
+        scale = min(W / float(w), H / float(h))
+        sw, sh = max(1, int(round(w * scale))), max(1, int(round(h * scale)))
+        scaled = pb.scale_simple(sw, sh, interp)
+        x, y = (W - sw) // 2, (H - sh) // 2
+        scaled.composite(canvas, x, y, sw, sh, 0, 0, 1, 1, interp, 255)
+    elif mode == "center":
+        cw, ch = min(w, W), min(h, H)
+        crop = pb.new_subpixbuf((w - cw) // 2, (h - ch) // 2, cw, ch)
+        x, y = (W - cw) // 2, (H - ch) // 2
+        crop.composite(canvas, x, y, cw, ch, 0, 0, 1, 1, interp, 255)
+    else:  # tile
+        for y in range(0, H, h):
+            for x in range(0, W, w):
+                tw, th = min(w, W - x), min(h, H - y)
+                part = pb if (tw, th) == (w, h) else pb.new_subpixbuf(0, 0, tw, th)
+                part.composite(canvas, x, y, tw, th, 0, 0, 1, 1, interp, 255)
+    return canvas
+
+
+def _save_wallpaper_pixbuf(pb, path=None):
+    path = path or WALLPAPER_RENDERED
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    pb.savev(path, "png", [], [])
+    return path
+
+
+def _render_wallpaper(source, options, width=None, height=None, path=None):
+    if GdkPixbuf is None:
+        raise RuntimeError("GdkPixbuf is not available")
+    if not source or not os.path.isfile(source):
+        raise OSError("wallpaper file not found: %s" % (source or ""))
+    if width is None or height is None:
+        width, height = _display_size()
+    pb = GdkPixbuf.Pixbuf.new_from_file(source)
+    canvas = _compose_wallpaper(
+        pb, options.get("mode", "fill"), options.get("rotation", 0),
+        options.get("flip_h", False), options.get("flip_v", False),
+        width, height)
+    if path:
+        _save_wallpaper_pixbuf(canvas, path)
+    return canvas
+
+
+def _desktop_app_dirs():
+    dirs = []
+    data_home = os.environ.get("XDG_DATA_HOME") or "~/.local/share"
+    candidates = [
+        os.path.expanduser(data_home),
+        os.path.expanduser("~/.local/share/flatpak/exports/share"),
+        "/usr/local/share",
+        "/usr/share",
+    ]
+    for value in (os.environ.get("XDG_DATA_DIRS") or "").split(":"):
+        if value:
+            candidates.append(value)
+    candidates.append("/var/lib/flatpak/exports/share")
+    for base in candidates:
+        path = os.path.abspath(os.path.expanduser(base))
+        appdir = os.path.join(path, "applications")
+        if appdir not in dirs:
+            dirs.append(appdir)
+    return dirs
+
+
+def _parse_desktop_entry(text, desktop_id):
+    section = ""
+    fields = {}
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip()
+            continue
+        if section != "Desktop Entry" or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        fields[key.strip()] = value.strip()
+    if not fields.get("Name"):
+        return None
+    if fields.get("Hidden", "").lower() == "true":
+        return None
+    if fields.get("NoDisplay", "").lower() == "true":
+        return None
+    return {
+        "id": desktop_id,
+        "name": fields.get("Name", desktop_id),
+        "exec": fields.get("Exec", ""),
+        "icon": fields.get("Icon", ""),
+        "terminal": fields.get("Terminal", "").lower() == "true",
+        "categories": {p.lower() for p in fields.get("Categories", "").split(";") if p},
+        "mimes": {p.lower() for p in fields.get("MimeType", "").split(";") if p},
+    }
+
+
+def _desktop_apps():
+    apps = {}
+    seen = set()
+    for directory in _desktop_app_dirs():
+        try:
+            entries = sorted(os.scandir(directory), key=lambda e: e.name.casefold())
+        except OSError:
+            continue
+        for entry in entries:
+            if not entry.is_file() or not entry.name.endswith(".desktop"):
+                continue
+            if entry.name in seen:
+                continue
+            seen.add(entry.name)
+            try:
+                text = open(entry.path, encoding="utf-8", errors="replace").read()
+            except OSError:
+                continue
+            app = _parse_desktop_entry(text, entry.name)
+            if app:
+                apps[app["id"]] = app
+    return sorted(apps.values(), key=lambda a: (a["name"].casefold(), a["id"]))
+
+
+def _desktop_apps_for_role(apps, role):
+    terminal_ids = {x.lower() for x in TERMINAL_DESKTOP_IDS}
+    file_ids = {x.lower() for x in FILE_MANAGER_DESKTOP_IDS}
+    browser_ids = {x.lower() for x in BROWSER_DESKTOP_IDS}
+    picked = []
+    for app in apps:
+        aid = app["id"].lower()
+        if role == "terminal":
+            match = "terminalemulator" in app["categories"] or aid in terminal_ids
+        elif role == "files":
+            match = "filemanager" in app["categories"] or aid in file_ids
+        else:
+            match = "webbrowser" in app["categories"] or aid in browser_ids
+        if match:
+            picked.append(app)
+    return picked
+
+
+def _mimeapps_defaults(path=None):
+    path = path or DEFAULT_APPS_FILE
+    entries = {}
+    section = ""
+    try:
+        lines = open(path, encoding="utf-8").read().splitlines()
+    except OSError:
+        return entries
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip()
+            continue
+        if section == "Default Applications" and "=" in line:
+            key, value = line.split("=", 1)
+            values = [p.strip() for p in value.split(";") if p.strip()]
+            if values:
+                entries[key.strip()] = values[0]
+    return entries
+
+
+def _mimeapps_lookup(mimes, path=None):
+    entries = _mimeapps_defaults(path)
+    for mime in mimes:
+        if entries.get(mime):
+            return entries[mime]
+    return ""
+
+
+def _mimeapps_set_defaults(text, values):
+    lines = (text or "").splitlines()
+    start = None
+    end = None
+    for i, raw in enumerate(lines):
+        line = raw.strip()
+        if line == "[Default Applications]":
+            start = i
+            end = len(lines)
+        elif start is not None and line.startswith("[") and line.endswith("]"):
+            end = i
+            break
+    if start is None:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.append("[Default Applications]")
+        start = len(lines) - 1
+        end = len(lines)
+    region = lines[start + 1:end]
+    out = []
+    seen = set()
+    for raw in region:
+        line = raw.strip()
+        key = line.split("=", 1)[0].strip() if line and not line.startswith("#") and "=" in line else None
+        if key in values:
+            if key not in seen:
+                out.append("%s=%s;" % (key, values[key].rstrip(";")))
+                seen.add(key)
+            continue
+        out.append(raw)
+    for key, value in values.items():
+        if key not in seen:
+            out.append("%s=%s;" % (key, value.rstrip(";")))
+    lines[start + 1:end] = out
+    return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def _backup_mimeapps(path):
+    if not path or not os.path.isfile(path):
+        return None
+    backup_dir = os.path.join(APP_STATE_DIR, "backups")
+    try:
+        os.makedirs(backup_dir, exist_ok=True)
+        target = os.path.join(
+            backup_dir, "mimeapps-%s.list" % time.strftime("%Y%m%d-%H%M%S"))
+        shutil.copy2(path, target)
+        return target
+    except OSError:
+        return None
+
+
+def _save_default_apps(values):
+    path = DEFAULT_APPS_FILE
+    try:
+        old = open(path, encoding="utf-8").read()
+    except OSError:
+        old = ""
+    new = _mimeapps_set_defaults(old, values)
+    if new == old:
+        return False, "No changes"
+    _backup_mimeapps(path)
+    try:
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(new)
+        os.replace(tmp, path)
+    except OSError as ex:
+        return False, str(ex)
+    return True, "Saved"
+
+
 def _light_night():
     for candidate in (
             os.path.expanduser("~/.local/bin/light-night"),
@@ -231,6 +627,156 @@ def _light_night():
         if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
             return candidate
     return None
+
+
+def _brightness_number(text):
+    m = re.search(r"-?\d+(?:\.\d+)?", text or "")
+    if not m:
+        return None
+    try:
+        return float(m.group(0))
+    except ValueError:
+        return None
+
+
+def _brightness_parse(text):
+    value = _brightness_number(text)
+    if value is None:
+        return None
+    return max(0, min(100, int(round(value))))
+
+
+def _brightness_helper():
+    for candidate in (
+            os.path.expanduser("~/.local/bin/light-brightness"),
+            shutil.which("light-brightness")):
+        if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def _brightness_sysfs_devices():
+    root = "/sys/class/backlight"
+    try:
+        names = sorted(os.listdir(root))
+    except OSError:
+        return []
+    return [os.path.join(root, name) for name in names
+            if os.path.isfile(os.path.join(root, name, "brightness"))]
+
+
+def _brightness_backends():
+    backends = []
+    helper = _brightness_helper()
+    if helper:
+        backends.append({"kind": "helper", "label": "light-brightness (DDC/CI)",
+                         "command": helper})
+    bc = shutil.which("brightnessctl")
+    if bc:
+        backends.append({"kind": "brightnessctl", "label": "brightnessctl",
+                         "command": bc})
+    light = shutil.which("light")
+    if light:
+        devices = _brightness_sysfs_devices()
+        backends.append({"kind": "light", "label": "light",
+                         "command": light,
+                         "device": os.path.basename(devices[0]) if devices else ""})
+    for device in _brightness_sysfs_devices():
+        backends.append({"kind": "sysfs", "label": "sysfs backlight",
+                         "device": device})
+    return backends
+
+
+def _brightness_read(backend):
+    kind = backend.get("kind")
+    try:
+        if kind == "helper":
+            proc = subprocess.run(
+                [backend["command"], "get"], capture_output=True, text=True,
+                timeout=8)
+            if proc.returncode != 0:
+                return None, (proc.stderr or "brightness helper failed").strip()
+            value = _brightness_parse(proc.stdout)
+            return (value, "") if value is not None else (None, "unreadable brightness")
+        if kind == "brightnessctl":
+            cur = subprocess.run(
+                [backend["command"], "g"], capture_output=True, text=True,
+                timeout=4)
+            cap = subprocess.run(
+                [backend["command"], "m"], capture_output=True, text=True,
+                timeout=4)
+            if cur.returncode != 0 or cap.returncode != 0:
+                return None, (cur.stderr or cap.stderr or "brightnessctl failed").strip()
+            current = _brightness_number(cur.stdout)
+            maximum = _brightness_number(cap.stdout)
+            if current is None or not maximum:
+                return None, "unreadable brightnessctl values"
+            return max(0, min(100, int(round(current * 100.0 / maximum)))), ""
+        if kind == "light":
+            cmd = [backend["command"]]
+            if backend.get("device"):
+                cmd += ["-s", backend["device"]]
+            proc = subprocess.run(cmd + ["-G"], capture_output=True, text=True,
+                                  timeout=4)
+            if proc.returncode != 0:
+                return None, (proc.stderr or "light failed").strip()
+            value = _brightness_parse(proc.stdout)
+            return (value, "") if value is not None else (None, "unreadable brightness")
+        if kind == "sysfs":
+            with open(os.path.join(backend["device"], "brightness"), encoding="utf-8") as fh:
+                current = int(fh.read().strip())
+            with open(os.path.join(backend["device"], "max_brightness"), encoding="utf-8") as fh:
+                maximum = int(fh.read().strip())
+            if maximum <= 0:
+                return None, "invalid backlight maximum"
+            return max(0, min(100, int(round(current * 100.0 / maximum)))), ""
+    except (OSError, ValueError, subprocess.SubprocessError) as ex:
+        return None, str(ex)
+    return None, "unsupported brightness backend"
+
+
+def _brightness_probe():
+    errors = []
+    for backend in _brightness_backends():
+        value, error = _brightness_read(backend)
+        if value is not None:
+            return backend, value, ""
+        if error:
+            errors.append("%s: %s" % (backend.get("label", "backend"), error))
+    return None, None, "; ".join(errors) or "no brightness backend found"
+
+
+def _brightness_set(backend, percent):
+    percent = max(0, min(100, int(percent)))
+    kind = backend.get("kind")
+    try:
+        if kind == "helper":
+            cmd = [backend["command"], "set", str(percent)]
+        elif kind == "brightnessctl":
+            cmd = [backend["command"], "set", "%d%%" % percent]
+        elif kind == "light":
+            cmd = [backend["command"]]
+            if backend.get("device"):
+                cmd += ["-s", backend["device"]]
+            cmd += ["-S", str(percent)]
+        elif kind == "sysfs":
+            with open(os.path.join(backend["device"], "max_brightness"),
+                      encoding="utf-8") as fh:
+                maximum = int(fh.read().strip())
+            raw = max(0, min(maximum, int(round(maximum * percent / 100.0))))
+            with open(os.path.join(backend["device"], "brightness"),
+                      "w", encoding="utf-8") as fh:
+                fh.write(str(raw))
+            return True, percent
+        else:
+            return False, "unsupported brightness backend"
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "exit code %s" % proc.returncode).strip()
+            return False, detail.splitlines()[-1]
+        return True, percent
+    except (OSError, ValueError, subprocess.SubprocessError) as ex:
+        return False, str(ex)
 
 
 def _night_marker():
@@ -779,11 +1325,17 @@ class App(Gtk.Application):
             ("Display", [
                 ("Outputs", "outputs", self.b_outputs, "video-display", OUTPUTS,
                  "Monitor rules: resolution, refresh, scale, position, transform and VRR."),
+                ("Brightness", "brightness", self.b_brightness,
+                 "display-brightness-symbolic", "system brightness",
+                 "Adjust the screen backlight or DDC/CI brightness for this session."),
                 ("Night light", "night", self.b_nightlight,
                  "weather-clear-night-symbolic", "gammastep",
                  "Warm the screen through gammastep for the current session."),
             ]),
             ("Behavior", [
+                ("Default apps", "apps", self.b_default_apps,
+                 "preferences-desktop-apps", DEFAULT_APPS_FILE,
+                 "Choose what opens folders, terminal links and web links."),
                 ("Window rules", "rules", self.b_windowrules, "preferences-system-windows", WINDOWRULES,
                  "Match apps by app_id or title, then set floating, size, "
                  "monitor, tags and effects."),
@@ -1770,6 +2322,237 @@ class App(Gtk.Application):
         self.night_status.set_text(message)
         return False
 
+    def b_brightness(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        page.set_margin_top(6)
+        page.set_margin_start(8)
+        page.set_margin_end(8)
+        page.set_margin_bottom(8)
+        page.set_hexpand(True)
+
+        self.bright_backend = None
+        self.bright_timer = None
+        self.bright_busy = False
+        self.bright_pending = None
+        self.bright_loading = False
+
+        section = Section("Screen brightness")
+        value_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        value_label = Gtk.Label(label="Brightness")
+        value_label.set_xalign(0)
+        value_label.set_hexpand(True)
+        self.bright_value = Gtk.Label(label="—")
+        self.bright_value.add_css_class("bind-combo")
+        value_row.append(value_label)
+        value_row.append(self.bright_value)
+        section.box.append(value_row)
+
+        self.bright_scale = Gtk.Scale.new_with_range(
+            Gtk.Orientation.HORIZONTAL, 0, 100, 1)
+        self.bright_scale.set_draw_value(False)
+        self.bright_scale.set_hexpand(True)
+        self.bright_scale.set_sensitive(False)
+        self.bright_scale.connect("value-changed", self._brightness_changed)
+        section.box.append(self.bright_scale)
+
+        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.bright_refresh = Gtk.Button(label="Refresh")
+        self.bright_refresh.set_tooltip_text("Re-read the current brightness")
+        self.bright_refresh.connect("clicked", lambda _b: self._brightness_start_probe())
+        self.bright_status = Gtk.Label(label="Detecting brightness backend…")
+        self.bright_status.add_css_class("dim-label")
+        self.bright_status.set_xalign(0)
+        self.bright_status.set_hexpand(True)
+        self.bright_status.set_wrap(True)
+        actions.append(self.bright_refresh)
+        actions.append(self.bright_status)
+        section.box.append(actions)
+
+        note = Gtk.Label(label=(
+            "Changes apply immediately for this session. The app uses a local "
+            "light-brightness helper, brightnessctl, light, or a sysfs backlight "
+            "device when available. Nothing is written to the Mango config."))
+        note.add_css_class("dim-label")
+        note.set_xalign(0)
+        note.set_wrap(True)
+        note.set_margin_top(8)
+
+        page.append(section)
+        page.append(note)
+        page.append(Gtk.Box(hexpand=True))
+        self._brightness_start_probe()
+        return page
+
+    def _brightness_start_probe(self):
+        if not hasattr(self, "bright_status"):
+            return
+        self.bright_refresh.set_sensitive(False)
+        self.bright_scale.set_sensitive(False)
+        self.bright_status.set_text("Detecting brightness backend…")
+        self.bright_value.set_text("—")
+
+        def worker():
+            backend, value, error = _brightness_probe()
+            GLib.idle_add(self._brightness_probed, backend, value, error)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _brightness_probed(self, backend, value, error):
+        if not hasattr(self, "bright_status"):
+            return False
+        self.bright_refresh.set_sensitive(True)
+        self.bright_backend = backend
+        if backend is None or value is None:
+            self.bright_scale.set_sensitive(False)
+            self.bright_value.set_text("—")
+            self.bright_status.set_text(
+                "No controllable brightness found. Install brightnessctl or light, "
+                "or make the backlight writable.%s" %
+                (" (%s)" % error if error else ""))
+            return False
+        self.bright_loading = True
+        self.bright_scale.set_value(value)
+        self.bright_loading = False
+        self.bright_value.set_text("%d%%" % value)
+        self.bright_scale.set_sensitive(True)
+        self.bright_status.set_text("Using %s · %d%%" % (backend["label"], value))
+        return False
+
+    def _brightness_changed(self, scale):
+        value = int(round(scale.get_value()))
+        if hasattr(self, "bright_value"):
+            self.bright_value.set_text("%d%%" % value)
+        if self.bright_loading or self.bright_backend is None:
+            return
+        if self.bright_timer is not None:
+            GLib.source_remove(self.bright_timer)
+        self.bright_timer = GLib.timeout_add(300, self._brightness_commit)
+
+    def _brightness_commit(self):
+        self.bright_timer = None
+        if self.bright_backend is None:
+            return False
+        self.bright_pending = int(round(self.bright_scale.get_value()))
+        self._brightness_start_pending()
+        return False
+
+    def _brightness_start_pending(self):
+        if self.bright_busy or self.bright_pending is None:
+            return
+        backend = self.bright_backend
+        value = self.bright_pending
+        self.bright_pending = None
+        self.bright_busy = True
+        self.bright_status.set_text("Setting %d%%…" % value)
+
+        def worker():
+            ok, message = _brightness_set(backend, value)
+            GLib.idle_add(self._brightness_set_done, ok, message, value)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _brightness_set_done(self, ok, message, value):
+        self.bright_busy = False
+        if ok:
+            label = (self.bright_backend or {}).get("label", "brightness backend")
+            self.bright_status.set_text("Using %s · %d%%" % (label, value))
+        else:
+            self.bright_status.set_text("Brightness failed: %s" % message)
+        if self.bright_pending is not None:
+            self._brightness_start_pending()
+        return False
+
+    def b_default_apps(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        page.set_margin_top(6)
+        page.set_margin_start(8)
+        page.set_margin_end(8)
+        page.set_margin_bottom(8)
+        page.set_hexpand(True)
+
+        self.app_dropdowns = {}
+        apps = _desktop_apps()
+        section = Section("Default applications")
+
+        for role, label, mimes, kind in DEFAULT_APP_ROLES:
+            current = _mimeapps_lookup(mimes)
+            role_apps = _desktop_apps_for_role(apps, kind)
+            labels = ["Leave unchanged"]
+            ids = [""]
+            seen = {""}
+            for app in role_apps:
+                if app["id"] in seen:
+                    continue
+                labels.append(app["name"])
+                ids.append(app["id"])
+                seen.add(app["id"])
+            if current and current not in seen:
+                labels.append("%s (current)" % current)
+                ids.append(current)
+                seen.add(current)
+            dropdown = Gtk.DropDown(model=Gtk.StringList.new(labels))
+            dropdown.set_hexpand(True)
+            dropdown.set_selected(ids.index(current) if current in ids else 0)
+            section.add_row(label, dropdown)
+            self.app_dropdowns[kind] = (dropdown, ids)
+
+        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.apps_apply = Gtk.Button(label="Save default apps")
+        self.apps_apply.add_css_class("suggested-action")
+        self.apps_apply.set_sensitive(bool(apps))
+        self.apps_apply.connect("clicked", self._save_default_apps)
+        self.apps_status = Gtk.Label(label="")
+        self.apps_status.add_css_class("dim-label")
+        self.apps_status.set_xalign(0)
+        self.apps_status.set_hexpand(True)
+        self.apps_status.set_wrap(True)
+        actions.append(self.apps_apply)
+        actions.append(self.apps_status)
+        section.box.append(actions)
+
+        file_note = Gtk.Label(label=(
+            "Writes XDG associations to %s and keeps its other entries; Mango "
+            "keybinds are not changed. Some applications may need a restart "
+            "before they pick up a new default." % shortpath(DEFAULT_APPS_FILE)))
+        file_note.add_css_class("dim-label")
+        file_note.set_xalign(0)
+        file_note.set_wrap(True)
+        file_note.set_margin_top(8)
+
+        page.append(section)
+        page.append(file_note)
+        if not apps:
+            self.apps_status.set_text("No desktop applications were found.")
+        page.append(Gtk.Box(hexpand=True))
+        return page
+
+    def _save_default_apps(self, _b=None):
+        values = {}
+        for role, label, mimes, kind in DEFAULT_APP_ROLES:
+            dropdown, ids = self.app_dropdowns.get(kind, (None, []))
+            if dropdown is None:
+                continue
+            selected = dropdown.get_selected()
+            if selected <= 0 or selected >= len(ids):
+                continue
+            desktop_id = ids[selected]
+            if not desktop_id:
+                continue
+            for mime in mimes:
+                values[mime] = desktop_id
+        if not values:
+            self.apps_status.set_text("Choose an application first.")
+            return
+        self.apps_apply.set_sensitive(False)
+        self.apps_status.set_text("Saving…")
+        ok, message = _save_default_apps(values)
+        self.apps_apply.set_sensitive(True)
+        if ok:
+            self.apps_status.set_text(
+                "Saved · %s" % shortpath(DEFAULT_APPS_FILE))
+        else:
+            self.apps_status.set_text("Could not save defaults: %s" % message)
+
     def b_wallpaper(self):
         page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         page.set_margin_top(8)
@@ -1780,6 +2563,9 @@ class App(Gtk.Application):
         self.wall_dir = WALLPAPER_DIR
         self.wall_selected = None
         self.wall_rows = []
+        self.wall_options = _wallpaper_options()
+        self.wall_pixbuf = None
+        self.wall_pixbuf_path = ""
 
         top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self.wall_search = Gtk.SearchEntry()
@@ -1817,7 +2603,7 @@ class App(Gtk.Application):
         paned.set_position(300)
         paned.set_resize_start_child(False)
         paned.set_resize_end_child(True)
-        paned.set_size_request(-1, 520)
+        paned.set_size_request(-1, 590)
         paned.set_vexpand(True)
 
         self.wall_list = Gtk.ListBox()
@@ -1841,7 +2627,7 @@ class App(Gtk.Application):
         self.wall_pic.set_content_fit(Gtk.ContentFit.CONTAIN)
         self.wall_pic.set_hexpand(True)
         self.wall_pic.set_vexpand(True)
-        self.wall_pic.set_size_request(360, 340)
+        self.wall_pic.set_size_request(360, 330)
         frame = Gtk.Box()
         frame.add_css_class("wall-preview")
         frame.set_hexpand(True)
@@ -1851,6 +2637,49 @@ class App(Gtk.Application):
         self.wall_caption.set_xalign(0)
         self.wall_caption.set_wrap(True)
         self.wall_caption.add_css_class("dim-label")
+
+        options = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        image_label = Gtk.Label(label="Layout")
+        image_label.add_css_class("dim-label")
+        mode_labels = [WALLPAPER_MODE_LABELS[m] for m in WALLPAPER_MODES]
+        self.wall_mode = Gtk.DropDown(model=Gtk.StringList.new(mode_labels))
+        self.wall_mode.set_selected(WALLPAPER_MODES.index(self.wall_options["mode"]))
+        self.wall_mode.set_tooltip_text(
+            "Fill crops to the screen; Fit letterboxes; Stretch distorts; "
+            "Center and Tile keep the original image size.")
+        self.wall_rotate = Gtk.DropDown(
+            model=Gtk.StringList.new(["No rotation", "Rotate 90°", "Rotate 180°", "Rotate 270°"]))
+        self.wall_rotate.set_selected(self.wall_options["rotation"] // 90)
+        self.wall_rotate.set_tooltip_text("Rotate the source image before fitting it")
+        self.wall_flip_h = Gtk.CheckButton(label="Flip H")
+        self.wall_flip_h.set_active(self.wall_options["flip_h"])
+        self.wall_flip_h.set_tooltip_text("Mirror the image horizontally")
+        self.wall_flip_v = Gtk.CheckButton(label="Flip V")
+        self.wall_flip_v.set_active(self.wall_options["flip_v"])
+        self.wall_flip_v.set_tooltip_text("Mirror the image vertically")
+        options.append(image_label)
+        options.append(self.wall_mode)
+        options.append(self.wall_rotate)
+        options.append(self.wall_flip_h)
+        options.append(self.wall_flip_v)
+        options_note = Gtk.Label(label=(
+            "The preview uses this monitor's shape, so a portrait image can "
+            "be checked before it becomes the wallpaper."))
+        options_note.add_css_class("dim-label")
+        options_note.set_xalign(0)
+        options_note.set_wrap(True)
+        if GdkPixbuf is None:
+            options_note.set_text(
+                "Image fitting is unavailable because GdkPixbuf is not installed.")
+        self.wall_options_note = options_note
+        self.wall_mode.connect("notify::selected", self._wallpaper_options_changed)
+        self.wall_rotate.connect("notify::selected", self._wallpaper_options_changed)
+        self.wall_flip_h.connect("toggled", self._wallpaper_options_changed)
+        self.wall_flip_v.connect("toggled", self._wallpaper_options_changed)
+        for widget in (self.wall_mode, self.wall_rotate, self.wall_flip_h,
+                       self.wall_flip_v):
+            widget.set_sensitive(GdkPixbuf is not None)
+
         actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         self.wall_set_btn = Gtk.Button(label="Set as wallpaper")
         self.wall_set_btn.add_css_class("suggested-action")
@@ -1866,13 +2695,17 @@ class App(Gtk.Application):
         actions.append(self.wall_status)
         right.append(frame)
         right.append(self.wall_caption)
+        right.append(options)
+        right.append(options_note)
         right.append(actions)
         paned.set_end_child(right)
         page.append(paned)
 
         tip = Gtk.Label(label=(
-            "Click a name to preview it, then Set as wallpaper. "
-            "Fuzzel is available as a text-only quick picker."))
+            "Click a name to preview it, choose a fit, then Set as wallpaper. "
+            "Fill, Fit, Stretch, Center, Tile, rotation and flips are baked "
+            "into a monitor-sized image so swaybg and the color helper both "
+            "see the same result."))
         tip.add_css_class("dim-label")
         tip.set_xalign(0)
         tip.set_wrap(True)
@@ -1896,20 +2729,67 @@ class App(Gtk.Application):
         if path:
             self._apply_wallpaper(path)
 
+    def _wallpaper_options_from_controls(self):
+        mode_index = self.wall_mode.get_selected()
+        mode = WALLPAPER_MODES[mode_index] if 0 <= mode_index < len(WALLPAPER_MODES) else "fill"
+        rotate_index = self.wall_rotate.get_selected()
+        rotation = rotate_index * 90 if 0 <= rotate_index <= 3 else 0
+        return {
+            "mode": mode,
+            "rotation": rotation,
+            "flip_h": bool(self.wall_flip_h.get_active()),
+            "flip_v": bool(self.wall_flip_v.get_active()),
+        }
+
+    def _wallpaper_options_changed(self, *_args):
+        if not hasattr(self, "wall_mode"):
+            return
+        options = self._wallpaper_options_from_controls()
+        _save_wallpaper_options(**options)
+        self.wall_options = options
+        if getattr(self, "wall_selected", None) and os.path.isfile(self.wall_selected):
+            self._show_wallpaper_source(self.wall_selected)
+
     def _show_wallpaper(self, row):
         if row is None:
             return
         path = getattr(row, "_path", None)
+        if path:
+            self._show_wallpaper_source(path)
+
+    def _show_wallpaper_source(self, path):
         if not path or not os.path.isfile(path):
             return
         self.wall_selected = path
+        options = self._wallpaper_options_from_controls()
         preview_error = ""
-        try:
-            texture = Gdk.Texture.new_from_filename(path)
-            self.wall_pic.set_paintable(texture)
-        except GLib.Error as ex:
-            self.wall_pic.set_paintable(None)
-            preview_error = str(ex)
+        dims = ""
+        source_width = source_height = 0
+        texture = None
+        if GdkPixbuf is not None:
+            try:
+                if self.wall_pixbuf_path != path or self.wall_pixbuf is None:
+                    self.wall_pixbuf = GdkPixbuf.Pixbuf.new_from_file(path)
+                    self.wall_pixbuf_path = path
+                source_width = self.wall_pixbuf.get_width()
+                source_height = self.wall_pixbuf.get_height()
+                dims = "%d×%d" % (source_width, source_height)
+                screen_w, screen_h = _display_size()
+                preview_w, preview_h = _fit_target_size(
+                    screen_w, screen_h, 760, 420)
+                preview = _compose_wallpaper(
+                    self.wall_pixbuf, options["mode"], options["rotation"],
+                    options["flip_h"], options["flip_v"],
+                    preview_w, preview_h)
+                texture = Gdk.Texture.new_for_pixbuf(preview)
+            except Exception as ex:
+                preview_error = str(ex)
+        if texture is None:
+            try:
+                texture = Gdk.Texture.new_from_filename(path)
+            except (GLib.Error, Exception) as ex:
+                preview_error = str(ex)
+        self.wall_pic.set_paintable(texture)
         try:
             size = os.path.getsize(path)
         except OSError:
@@ -1920,7 +2800,18 @@ class App(Gtk.Application):
             size_text = "%.0f KB" % (size / 1024.0)
         else:
             size_text = "%d bytes" % size
-        self.wall_caption.set_text("%s  ·  %s" % (os.path.basename(path), size_text))
+        details = [os.path.basename(path)]
+        if dims:
+            details.append(dims)
+        details.append(size_text)
+        details.append(WALLPAPER_MODE_LABELS[options["mode"]].split(" (")[0])
+        if options["rotation"]:
+            details.append("rotate %d°" % options["rotation"])
+        if options["flip_h"]:
+            details.append("flip H")
+        if options["flip_v"]:
+            details.append("flip V")
+        self.wall_caption.set_text("  ·  ".join(details))
         self.wall_set_btn.set_sensitive(True)
         if preview_error:
             self.wall_status.set_text("Preview unavailable: %s" % preview_error)
@@ -1929,10 +2820,12 @@ class App(Gtk.Application):
         if not hasattr(self, "wall_list"):
             return
         previous = select_path or self.wall_selected
-        current = _current_wallpaper()
+        current = _current_wallpaper_source()
         files = _wallpaper_files(self.wall_dir)
         self._clear_container(self.wall_list)
         self.wall_rows = []
+        self.wall_pixbuf = None
+        self.wall_pixbuf_path = ""
         target_row = None
         for path in files:
             row = Gtk.ListBoxRow()
@@ -1996,37 +2889,68 @@ class App(Gtk.Application):
         if not path or not os.path.isfile(path):
             self.wall_status.set_text("Select a wallpaper first.")
             return
+        options = self._wallpaper_options_from_controls()
+        _save_wallpaper_options(**options)
+        self.wall_options = options
         self.wall_set_btn.set_sensitive(False)
-        self.wall_status.set_text("Applying wallpaper…")
+        self.wall_status.set_text("Preparing wallpaper…")
+
+        def worker():
+            rendered = path
+            try:
+                if GdkPixbuf is not None:
+                    canvas = _render_wallpaper(path, options)
+                    rendered = _save_wallpaper_pixbuf(canvas)
+            except Exception as ex:
+                GLib.idle_add(self._wallpaper_render_failed, str(ex))
+                return
+            GLib.idle_add(self._wallpaper_rendered, path, rendered)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _wallpaper_render_failed(self, error):
+        self.wall_set_btn.set_sensitive(True)
+        self.wall_status.set_text("Wallpaper failed: %s" % error)
+        return False
+
+    def _wallpaper_rendered(self, source, rendered):
         script = _light_wallpaper()
         if script:
+            self.wall_status.set_text("Applying wallpaper…")
+
             def worker():
                 try:
                     proc = subprocess.run(
-                        [script, path], capture_output=True, text=True, timeout=45)
+                        [script, rendered], capture_output=True, text=True,
+                        timeout=60)
                     code = proc.returncode
                     err = (proc.stderr or "").strip()
                 except (OSError, subprocess.SubprocessError) as ex:
                     code, err = 1, str(ex)
-                GLib.idle_add(self._wallpaper_done, path, code, err)
+                GLib.idle_add(self._wallpaper_done, source, rendered, code, err)
 
             threading.Thread(target=worker, daemon=True).start()
-            return
-        self._apply_wallpaper_fallback(path)
+            return False
+        self._apply_wallpaper_fallback(rendered, source)
+        return False
 
-    def _apply_wallpaper_fallback(self, path):
-        if os.path.islink(WALLPAPER_LINK):
-            try:
-                tmp = WALLPAPER_LINK + ".tmp"
-                if os.path.lexists(tmp):
-                    os.unlink(tmp)
-                os.symlink(path, tmp)
-                os.replace(tmp, WALLPAPER_LINK)
-            except OSError:
-                pass
+    def _apply_wallpaper_fallback(self, path, source=None):
+        link_error = ""
+        try:
+            parent = os.path.dirname(WALLPAPER_LINK)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            tmp = WALLPAPER_LINK + ".tmp"
+            if os.path.lexists(tmp):
+                os.unlink(tmp)
+            os.symlink(path, tmp)
+            os.replace(tmp, WALLPAPER_LINK)
+        except OSError as ex:
+            link_error = str(ex)
         swaybg = shutil.which("swaybg")
         if not swaybg:
-            self._wallpaper_done(path, 1, "swaybg is not installed")
+            self._wallpaper_done(source or path, path, 1,
+                                 link_error or "swaybg is not installed")
             return
         service_active = False
         try:
@@ -2041,9 +2965,9 @@ class App(Gtk.Application):
                     ["systemctl", "--user", "restart", "swaybg.service"],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     timeout=8)
-                self._wallpaper_done(path, 0, "")
+                self._wallpaper_done(source or path, path, 0, "")
             except (OSError, subprocess.SubprocessError) as ex:
-                self._wallpaper_done(path, 1, str(ex))
+                self._wallpaper_done(source or path, path, 1, str(ex))
             return
         try:
             subprocess.run(
@@ -2057,54 +2981,71 @@ class App(Gtk.Application):
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 start_new_session=True)
         except OSError as ex:
-            self._wallpaper_done(path, 1, "could not start swaybg: %s" % ex)
+            self._wallpaper_done(source or path, path, 1,
+                                 "could not start swaybg: %s" % ex)
             return
-        self._wallpaper_done(path, 0, "")
+        self._wallpaper_done(source or path, path, 0, "")
 
-    def _wallpaper_done(self, path, code, error):
+    def _wallpaper_done(self, source, rendered, code, error):
         self.wall_set_btn.set_sensitive(True)
         if code == 0:
-            _write_text(WALLPAPER_STATE, path)
-            self.wall_status.set_text("Wallpaper applied · %s" % os.path.basename(path))
-            self._populate_wallpapers(select_path=path)
+            _write_text(WALLPAPER_STATE, source)
+            options = self._wallpaper_options_from_controls()
+            _save_wallpaper_options(source=source, rendered=rendered, **options)
+            self.wall_options = options
+            self.wall_status.set_text(
+                "Wallpaper applied · %s" % os.path.basename(source))
+            self._populate_wallpapers(select_path=source)
         else:
             detail = error.splitlines()[-1] if error else "exit code %s" % code
             self.wall_status.set_text("Wallpaper failed: %s" % detail)
         return False
 
     def _quick_pick_wallpaper(self, _b=None):
-        script = _light_wallpaper()
         fuzzel = shutil.which("fuzzel")
-        if not script and not fuzzel:
+        script = _light_wallpaper()
+        if not fuzzel and not script:
             self.wall_status.set_text("fuzzel is not installed.")
             return
         self.wall_status.set_text("Fuzzel picker open…")
         self.wall_set_btn.set_sensitive(False)
-        before = _current_wallpaper()
+        before = _current_wallpaper_source()
 
         def worker():
-            choice = ""
             try:
-                if script:
-                    proc = subprocess.run([script], timeout=300)
-                    GLib.idle_add(self._quick_pick_done, proc.returncode, "",
-                                  before)
+                if fuzzel:
+                    names = [os.path.basename(p) for p in _wallpaper_files(self.wall_dir)]
+                    if not names:
+                        GLib.idle_add(self._quick_pick_done, 1, "", before)
+                        return
+                    proc = subprocess.run(
+                        [fuzzel, "--dmenu", "--prompt=Wallpaper "],
+                        input="\n".join(names), capture_output=True, text=True,
+                        timeout=300)
+                    choice = (proc.stdout or "").strip()
+                    GLib.idle_add(self._quick_pick_done, 0 if choice else 1,
+                                  choice, before)
                     return
-                names = [os.path.basename(p) for p in _wallpaper_files(self.wall_dir)]
-                if not names:
-                    GLib.idle_add(self._quick_pick_done, 1, "", before)
-                    return
-                proc = subprocess.run(
-                    [fuzzel, "--dmenu", "--prompt=Wallpaper "],
-                    input="\n".join(names), capture_output=True, text=True,
-                    timeout=300)
-                choice = (proc.stdout or "").strip()
+                # A helper with its own picker still gets the app's fit options:
+                # re-apply its selected source through the normal render path.
+                proc = subprocess.run([script], timeout=300)
+                after = _current_wallpaper_source()
+                GLib.idle_add(self._quick_pick_helper_done, proc.returncode,
+                              after, before)
             except (OSError, subprocess.SubprocessError):
-                choice = ""
-            GLib.idle_add(self._quick_pick_done, 0 if choice else 1, choice,
-                          before)
+                GLib.idle_add(self._quick_pick_done, 1, "", before)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _quick_pick_helper_done(self, code, after, before):
+        if code == 0 and after and after != before and os.path.isfile(after):
+            self.wall_selected = after
+            self._apply_wallpaper(after)
+            return False
+        self.wall_set_btn.set_sensitive(True)
+        self.wall_status.set_text(
+            "No wallpaper change." if code == 0 else "Fuzzel picker closed.")
+        return False
 
     def _quick_pick_done(self, code, choice, before=None):
         if choice:
@@ -2112,7 +3053,7 @@ class App(Gtk.Application):
             return False
         self.wall_set_btn.set_sensitive(True)
         if code == 0:
-            current = _current_wallpaper()
+            current = _current_wallpaper_source()
             self._populate_wallpapers(select_path=current)
             if current and current != before:
                 self.wall_status.set_text("Wallpaper updated from fuzzel pick.")
@@ -3260,7 +4201,8 @@ def parse_args(argv):
                     help="Mango config directory (default: ~/.config/mango)")
     ap.add_argument("--tab", metavar="ID",
                     help="open a tab directly (layout, theme, colors, cursor, mouse, "
-                         "touchpad, keys, wallpaper, outputs, night, rules)")
+                         "touchpad, keys, wallpaper, outputs, brightness, night, "
+                         "apps, rules)")
     ap.add_argument("--no-reload", action="store_true",
                     help="write and validate, but do not reload Mango")
     ap.add_argument("--version", action="version",
