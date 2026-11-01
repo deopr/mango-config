@@ -18,6 +18,8 @@ touch. Every Apply is validated and backed up.
 | ![Outputs](docs/screenshots/outputs.png) | ![Keybinds](docs/screenshots/keybinds.png) |
 | **Wallpaper** | **Night light** |
 | ![Wallpaper](docs/screenshots/wallpaper.png) | ![Night light](docs/screenshots/night-light.png) |
+| **Window rules** | |
+| ![Window rules](docs/screenshots/window-rules.png) | The collapsible help card, app matching, geometry, tags and effect toggles. |
 
 ## Features
 
@@ -36,7 +38,11 @@ touch. Every Apply is validated and backed up.
   refresh rate, scale, position, transform, VRR, HDR, primary and Custom mode.
 - **Night light** — live `gammastep` control under Display: enable, set a color
   temperature, and apply immediately. The last temperature is remembered.
-- **Window rules** — floating rules per app.
+- **Window rules** — match by `app_id` or `title`, then set floating,
+  fullscreen, open silently, global, overlay, terminal swallowing, width,
+  height, monitor, tags and effects (blur, border, shadow, radius, animation).
+  A collapsible help card explains every field; unknown keys and untracked
+  rules are preserved.
 - **Keybinds** — searchable, grouped by compositor vs apps, keycap-style combos
   with per-bind editing.
 - **Display guard** — after an output change, an inline 10-second countdown

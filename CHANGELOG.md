@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.1 — 2026-10-31
+
+Restore the expanded window-rule editor.
+
+- The Window rules page now has a collapsible help card explaining what rules
+  are and listing every editable variable.
+- Each rule exposes `app_id`, `title`, floating, fullscreen, open silently,
+  global, overlay, terminal, width, height, monitor, tags, and the
+  blur/border/shadow/radius/animation effect toggles.
+- Rules can be added, edited, expanded/collapsed and deleted directly. Explicit
+  deletes are applied; untracked lines and unknown keys are still preserved.
+- Validation now rejects unknown window-rule options so a typo cannot be
+  written silently.
+- GUI tests cover field edits, adding/deleting rules, blank-rule dropping and
+  stable repeat Apply.
+
 ## 0.2.0 — 2026-10-31
 
 Add Wallpaper and Night light pages.
