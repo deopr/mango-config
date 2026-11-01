@@ -71,10 +71,24 @@ with tempfile.TemporaryDirectory() as td:
     check("missing optional source: inline layout wins", r["layout"] == "config.conf", str(r))
 
 out = subprocess.run([sys.executable, APP, "--version"], capture_output=True, text=True)
-check("CLI version", out.returncode == 0 and out.stdout.strip() == "mango-config 0.1.1",
+check("CLI version", out.returncode == 0 and out.stdout.strip() == "mango-config 0.2.0",
       out.stdout + out.stderr)
 out = subprocess.run([sys.executable, APP, "--help"], capture_output=True, text=True)
 check("CLI help", out.returncode == 0 and "--config-dir" in out.stdout and "--tab" in out.stdout)
+check("CLI help lists new tabs",
+      "wallpaper" in out.stdout and "night" in out.stdout, out.stdout)
+
+with tempfile.TemporaryDirectory() as td:
+    for name in ("b.png", "a.JPG", "notes.txt", "sub.png"):
+        path = os.path.join(td, name)
+        if name == "sub.png":
+            os.mkdir(path)
+        else:
+            open(path, "w").write("x")
+    files = mc._wallpaper_files(td)
+    check("wallpaper scan: images only, sorted", [
+        os.path.basename(p) for p in files] == ["a.JPG", "b.png"], str(files))
+check("wallpaper scan: missing dir", mc._wallpaper_files("/no/such/wallpapers") == [])
 
 if failures:
     print("\n%d test(s) failed" % len(failures))

@@ -56,6 +56,11 @@ def run_one(profile_dir, label):
     app._validate_config = lambda: (True, "")
     app._reload_mango = lambda: True
 
+    assert hasattr(app, "wall_list") and app.wall_list is not None, "%s: wallpaper page missing" % label
+    assert hasattr(app, "wall_search"), "%s: wallpaper search missing" % label
+    assert hasattr(app, "night_scale"), "%s: night light page missing" % label
+    assert hasattr(app, "night_apply"), "%s: night light apply missing" % label
+
     app.on_apply(None)
     hash1 = digest(profile_dir)
     app.on_apply(None)

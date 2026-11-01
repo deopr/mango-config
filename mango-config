@@ -2,12 +2,16 @@
 # mango-config — a friendly GTK4 settings app for the Mango Wayland compositor.
 # Edits only the files your config.conf actually sources, validates with
 # `mango -p`, keeps timestamped backups, and reloads through Mango's IPC socket.
+# Optional Wallpaper and Night light pages talk to swaybg/light-wallpaper and
+# gammastep without touching the Mango config.
 import argparse
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 
 import gi
@@ -16,11 +20,18 @@ gi.require_version("Gdk", "4.0")
 gi.require_version("Pango", "1.0")
 from gi.repository import Gdk, GLib, Gtk, Pango
 
-VERSION = "0.1.1"
+VERSION = "0.2.0"
 APP_ID = "io.github.deopr.MangoConfig"
 
 DEFAULT_CONFIG_DIR = os.path.abspath(os.path.expanduser(
     os.environ.get("MANGO_CONFIG_DIR") or "~/.config/mango"))
+APP_STATE_DIR = os.path.join(
+    os.path.expanduser(os.environ.get("XDG_STATE_HOME") or "~/.local/state"),
+    "mango-config")
+NIGHT_STATE = os.path.join(APP_STATE_DIR, "nightlight.json")
+WALLPAPER_STATE = os.path.join(APP_STATE_DIR, "wallpaper")
+WALLPAPER_LINK = os.path.expanduser("~/.config/wall/current")
+NIGHT_FALLBACK_TEMP = 3500
 
 # Filled in by configure_profile() before the UI is built.
 CONFIG_DIR = DEFAULT_CONFIG_DIR
@@ -70,6 +81,198 @@ def shortpath(path):
     if not path:
         return "not found"
     return path.replace(os.path.expanduser("~"), "~")
+
+
+def _read_json(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_json(path, data):
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2)
+            fh.write("\n")
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def _read_text(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
+def _write_text(path, value):
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(value + "\n")
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def _discover_wallpaper_dir():
+    env = os.environ.get("WALLPAPER_DIR")
+    candidates = [env] if env else []
+    candidates += [
+        "~/Imagens/Wallpapers",
+        "~/Pictures/Wallpapers",
+        "~/Pictures",
+        "~/Wallpapers",
+    ]
+    for candidate in candidates:
+        path = os.path.abspath(os.path.expanduser(candidate))
+        if os.path.isdir(path):
+            return path
+    return os.path.abspath(os.path.expanduser(env or "~/Pictures"))
+
+
+WALLPAPER_DIR = _discover_wallpaper_dir()
+WALLPAPER_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif")
+
+
+def _wallpaper_files(directory):
+    try:
+        names = [
+            entry.path for entry in os.scandir(directory)
+            if entry.is_file() and entry.name.lower().endswith(WALLPAPER_EXTS)
+        ]
+    except OSError:
+        return []
+    return sorted(names, key=lambda p: os.path.basename(p).casefold())
+
+
+def _current_wallpaper():
+    for path in (WALLPAPER_LINK, WALLPAPER_STATE):
+        try:
+            if os.path.islink(path):
+                target = os.path.realpath(path)
+            elif os.path.isfile(path):
+                target = _read_text(path)
+            else:
+                continue
+            if target and os.path.isfile(target):
+                return target
+        except OSError:
+            continue
+    return None
+
+
+def _light_wallpaper():
+    for candidate in (
+            os.path.expanduser("~/.local/bin/light-wallpaper"),
+            shutil.which("light-wallpaper")):
+        if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def _light_night():
+    for candidate in (
+            os.path.expanduser("~/.local/bin/light-night"),
+            shutil.which("light-night")):
+        if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def _night_marker():
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or "/run/user/%d" % os.getuid()
+    return os.path.join(runtime, "mango-night-mode")
+
+
+def _sync_night_marker(enabled):
+    # A common optional keybind helper (light-night) uses this runtime marker
+    # to decide whether its next invocation turns the effect on or off. Keep
+    # that marker in sync when that helper is installed; other setups ignore it.
+    if not _light_night():
+        return
+    marker = _night_marker()
+    try:
+        if enabled:
+            open(marker, "a").close()
+        elif os.path.exists(marker):
+            os.unlink(marker)
+    except OSError:
+        pass
+
+
+def _nightlight_process():
+    try:
+        out = subprocess.run(
+            ["pgrep", "-x", "gammastep"], capture_output=True, text=True,
+            timeout=2)
+    except (OSError, subprocess.SubprocessError):
+        return False, None
+    for pid in (out.stdout or "").split():
+        try:
+            raw = open("/proc/%s/cmdline" % pid, "rb").read()
+        except OSError:
+            continue
+        args = [a.decode("utf-8", "ignore") for a in raw.split(b"\0") if a]
+        temp = None
+        for i, arg in enumerate(args):
+            if arg in ("-O", "--temperature") and i + 1 < len(args):
+                try:
+                    temp = int(args[i + 1])
+                except ValueError:
+                    pass
+            elif arg.startswith("--temperature="):
+                try:
+                    temp = int(arg.split("=", 1)[1])
+                except ValueError:
+                    pass
+        return True, temp
+    return False, None
+
+
+def _set_nightlight(enabled, temperature):
+    gammastep = shutil.which("gammastep")
+    if not gammastep:
+        return False, "gammastep is not installed"
+    try:
+        subprocess.run(
+            ["systemctl", "--user", "stop", "gammastep.service"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=4)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        subprocess.run(
+            ["pkill", "-x", "gammastep"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    if enabled:
+        try:
+            subprocess.Popen(
+                [gammastep, "-m", "wayland", "-O", str(int(temperature))],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True)
+        except OSError as ex:
+            return False, "could not start gammastep: %s" % ex
+        time.sleep(0.35)
+        running, actual = _nightlight_process()
+        if not running:
+            return False, "gammastep did not stay running"
+        _write_json(NIGHT_STATE, {"enabled": True,
+                                  "temperature": actual or int(temperature)})
+        _sync_night_marker(True)
+        return True, "Night light on · %sK" % (actual or int(temperature))
+    _write_json(NIGHT_STATE, {"enabled": False, "temperature": int(temperature)})
+    _sync_night_marker(False)
+    return True, "Night light off"
 
 
 def _expand_source(value, config_dir):
@@ -516,6 +719,9 @@ class App(Gtk.Application):
                  "Border, focus and urgent colors from the file that takes effect."),
                 ("Cursor", "cursor", self.b_cursor, "input-mouse", CURSOR,
                  "Cursor theme and size for Wayland clients."),
+                ("Wallpaper", "wallpaper", self.b_wallpaper,
+                 "preferences-desktop-wallpaper", WALLPAPER_DIR,
+                 "Browse wallpapers with a preview, then apply one."),
             ]),
             ("Input", [
                 ("Mouse", "mouse", self.b_input_mouse, "input-mouse", INPUT,
@@ -528,6 +734,9 @@ class App(Gtk.Application):
             ("Display", [
                 ("Outputs", "outputs", self.b_outputs, "video-display", OUTPUTS,
                  "Monitor rules: resolution, refresh, scale, position, transform and VRR."),
+                ("Night light", "night", self.b_nightlight,
+                 "weather-clear-night-symbolic", "gammastep",
+                 "Warm the screen through gammastep for the current session."),
             ]),
             ("Behavior", [
                 ("Window rules", "rules", self.b_windowrules, "preferences-system-windows", WINDOWRULES,
@@ -760,6 +969,19 @@ class App(Gtk.Application):
             .page-title { font-size: 1.4em; font-weight: 800; }
             .page-path { font-family: monospace; font-size: 0.8em; opacity: 0.5; }
             .mono-raw { font-family: monospace; font-size: 0.85em; opacity: 0.75; }
+            .wall-list {
+                background: alpha(currentColor, 0.03);
+                border-radius: 9px;
+                padding: 4px;
+            }
+            .wall-list row { border-radius: 7px; padding: 4px 8px; }
+            .wall-list row:hover { background: alpha(currentColor, 0.07); }
+            .wall-list row:selected { background: alpha(currentColor, 0.15); }
+            .wall-preview {
+                background: alpha(currentColor, 0.05);
+                border-radius: 10px;
+                padding: 8px;
+            }
             .warn-banner {
                 background: alpha(#f5c211, 0.18);
                 border-radius: 8px;
@@ -1356,6 +1578,469 @@ class App(Gtk.Application):
                  "hdr_min_lum", "hdr_max_lum", "hdr_max_avg_lum", "hdr_force", "icc"]
         keys = [k for k in order if k in kv] + [k for k in kv if k not in order]
         return ",".join("%s:%s" % (k, kv[k]) for k in keys)
+
+    def b_nightlight(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        page.set_margin_top(6)
+        page.set_margin_start(8)
+        page.set_margin_end(8)
+        page.set_margin_bottom(8)
+        page.set_hexpand(True)
+
+        running, current = _nightlight_process()
+        saved = _read_json(NIGHT_STATE)
+        try:
+            saved_temp = int(saved.get("temperature", NIGHT_FALLBACK_TEMP))
+        except (TypeError, ValueError):
+            saved_temp = NIGHT_FALLBACK_TEMP
+        saved_temp = max(2000, min(6500, saved_temp))
+        temperature = current if current is not None else saved_temp
+
+        section = Section("Screen warmth")
+        self.night_sw = Gtk.Switch.new()
+        self.night_sw.set_active(running)
+        self.night_sw.connect("state-set", self._night_switch_changed)
+        section.add_row("Enabled", self.night_sw)
+
+        temp_row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        temp_top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        temp_label = Gtk.Label(label="Temperature")
+        temp_label.set_xalign(0)
+        temp_label.set_hexpand(True)
+        self.night_value = Gtk.Label(label="%dK" % temperature)
+        self.night_value.add_css_class("bind-combo")
+        temp_top.append(temp_label)
+        temp_top.append(self.night_value)
+        self.night_scale = Gtk.Scale.new_with_range(
+            Gtk.Orientation.HORIZONTAL, 2000, 6500, 100)
+        self.night_scale.set_value(temperature)
+        self.night_scale.set_draw_value(False)
+        self.night_scale.set_hexpand(True)
+        self.night_scale.connect("value-changed", self._night_temp_changed)
+        temp_row.append(temp_top)
+        temp_row.append(self.night_scale)
+        section.box.append(temp_row)
+
+        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.night_apply = Gtk.Button(label="Apply night light")
+        self.night_apply.add_css_class("suggested-action")
+        self.night_apply.connect("clicked", self.apply_nightlight)
+        self.night_status = Gtk.Label(label="")
+        self.night_status.add_css_class("dim-label")
+        self.night_status.set_xalign(0)
+        self.night_status.set_hexpand(True)
+        self.night_status.set_wrap(True)
+        actions.append(self.night_apply)
+        actions.append(self.night_status)
+        section.box.append(actions)
+
+        note = Gtk.Label(label=(
+            "Applies immediately through gammastep, for this session only. "
+            "This does not edit the Mango config. Lower values are warmer; "
+            "3500K is a good starting point."))
+        note.add_css_class("dim-label")
+        note.set_xalign(0)
+        note.set_wrap(True)
+        note.set_margin_top(8)
+
+        page.append(section)
+        page.append(note)
+        page.append(Gtk.Box(hexpand=True))
+        if not shutil.which("gammastep"):
+            self.night_sw.set_sensitive(False)
+            self.night_scale.set_sensitive(False)
+            self.night_apply.set_sensitive(False)
+            self.night_status.set_text("gammastep is not installed")
+        elif running:
+            self.night_status.set_text("On · %sK" % (current or temperature))
+        else:
+            self.night_status.set_text("Off")
+        return page
+
+    def _night_temp_changed(self, scale):
+        self.night_value.set_text("%dK" % int(round(scale.get_value())))
+
+    def _night_switch_changed(self, sw, state):
+        if state:
+            self.night_status.set_text("On — click Apply")
+        else:
+            self.night_status.set_text("Off — click Apply")
+        return False
+
+    def apply_nightlight(self, _b=None):
+        enabled = self.night_sw.get_active()
+        temperature = int(round(self.night_scale.get_value()))
+        self.night_apply.set_sensitive(False)
+        self.night_status.set_text("Applying…")
+
+        def worker():
+            ok, message = _set_nightlight(enabled, temperature)
+            GLib.idle_add(self._nightlight_done, ok, message, enabled, temperature)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _nightlight_done(self, ok, message, enabled, temperature):
+        running, current = _nightlight_process()
+        self.night_sw.set_active(running)
+        if running and current is not None:
+            self.night_scale.set_value(current)
+        elif not running:
+            self.night_scale.set_value(temperature)
+        self.night_apply.set_sensitive(True)
+        self.night_status.set_text(message)
+        return False
+
+    def b_wallpaper(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        page.set_margin_top(8)
+        page.set_margin_start(8)
+        page.set_margin_end(8)
+        page.set_margin_bottom(8)
+        page.set_hexpand(True)
+        self.wall_dir = WALLPAPER_DIR
+        self.wall_selected = None
+        self.wall_rows = []
+
+        top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.wall_search = Gtk.SearchEntry()
+        self.wall_search.set_placeholder_text("Filter wallpapers…")
+        self.wall_search.set_hexpand(True)
+        self.wall_search.connect("search-changed", self._filter_wallpapers)
+        self.wall_count = Gtk.Label(label="")
+        self.wall_count.add_css_class("dim-label")
+        refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic")
+        refresh.set_tooltip_text("Rescan the wallpaper folder")
+        refresh.connect("clicked", lambda _b: self._populate_wallpapers(
+            select_path=self.wall_selected))
+        open_btn = Gtk.Button(label="Open folder")
+        open_btn.set_tooltip_text(self.wall_dir)
+        open_btn.connect("clicked", self._open_wallpaper_folder)
+        top.append(self.wall_search)
+        top.append(self.wall_count)
+        top.append(refresh)
+        top.append(open_btn)
+
+        quick = None
+        script = _light_wallpaper()
+        fuzzel = shutil.which("fuzzel")
+        if script or fuzzel:
+            quick = Gtk.Button(label="Fuzzel quick pick")
+            quick.set_tooltip_text(
+                "Pick by name in fuzzel. Fuzzel is text-only; the list on the left and the preview on the right are rendered here.")
+            quick.connect("clicked", self._quick_pick_wallpaper)
+            top.append(quick)
+        self.wall_quick_btn = quick
+        page.append(top)
+
+        paned = Gtk.Paned.new(Gtk.Orientation.HORIZONTAL)
+        paned.set_wide_handle(True)
+        paned.set_position(300)
+        paned.set_resize_start_child(False)
+        paned.set_resize_end_child(True)
+        paned.set_size_request(-1, 520)
+        paned.set_vexpand(True)
+
+        self.wall_list = Gtk.ListBox()
+        self.wall_list.add_css_class("wall-list")
+        self.wall_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.wall_list.set_activate_on_single_click(False)
+        self.wall_list.connect("row-selected", self._wall_row_selected)
+        self.wall_list.connect("row-activated", self._wall_row_activated)
+        left = Gtk.ScrolledWindow()
+        left.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        left.set_child(self.wall_list)
+        left.set_size_request(280, -1)
+        paned.set_start_child(left)
+
+        right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        right.set_margin_start(12)
+        right.set_hexpand(True)
+        right.set_vexpand(True)
+        self.wall_pic = Gtk.Picture()
+        self.wall_pic.set_can_shrink(True)
+        self.wall_pic.set_content_fit(Gtk.ContentFit.CONTAIN)
+        self.wall_pic.set_hexpand(True)
+        self.wall_pic.set_vexpand(True)
+        self.wall_pic.set_size_request(360, 340)
+        frame = Gtk.Box()
+        frame.add_css_class("wall-preview")
+        frame.set_hexpand(True)
+        frame.set_vexpand(True)
+        frame.append(self.wall_pic)
+        self.wall_caption = Gtk.Label(label="Select a wallpaper")
+        self.wall_caption.set_xalign(0)
+        self.wall_caption.set_wrap(True)
+        self.wall_caption.add_css_class("dim-label")
+        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.wall_set_btn = Gtk.Button(label="Set as wallpaper")
+        self.wall_set_btn.add_css_class("suggested-action")
+        self.wall_set_btn.set_sensitive(False)
+        self.wall_set_btn.connect(
+            "clicked", lambda _b: self._apply_wallpaper(self.wall_selected))
+        self.wall_status = Gtk.Label(label="")
+        self.wall_status.add_css_class("dim-label")
+        self.wall_status.set_xalign(0)
+        self.wall_status.set_hexpand(True)
+        self.wall_status.set_wrap(True)
+        actions.append(self.wall_set_btn)
+        actions.append(self.wall_status)
+        right.append(frame)
+        right.append(self.wall_caption)
+        right.append(actions)
+        paned.set_end_child(right)
+        page.append(paned)
+
+        tip = Gtk.Label(label=(
+            "Click a name to preview it, then Set as wallpaper. "
+            "Fuzzel is available as a text-only quick picker."))
+        tip.add_css_class("dim-label")
+        tip.set_xalign(0)
+        tip.set_wrap(True)
+        page.append(tip)
+        page.append(Gtk.Box(hexpand=True))
+
+        self._populate_wallpapers()
+        return page
+
+    def _open_wallpaper_folder(self, _b=None):
+        if os.path.isdir(self.wall_dir):
+            subprocess.Popen(["xdg-open", self.wall_dir])
+        else:
+            self.wall_status.set_text("Folder not found: %s" % shortpath(self.wall_dir))
+
+    def _wall_row_selected(self, _lb, row):
+        self._show_wallpaper(row)
+
+    def _wall_row_activated(self, _lb, row):
+        path = getattr(row, "_path", None)
+        if path:
+            self._apply_wallpaper(path)
+
+    def _show_wallpaper(self, row):
+        if row is None:
+            return
+        path = getattr(row, "_path", None)
+        if not path or not os.path.isfile(path):
+            return
+        self.wall_selected = path
+        preview_error = ""
+        try:
+            texture = Gdk.Texture.new_from_filename(path)
+            self.wall_pic.set_paintable(texture)
+        except GLib.Error as ex:
+            self.wall_pic.set_paintable(None)
+            preview_error = str(ex)
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            size = 0
+        if size >= 1024 * 1024:
+            size_text = "%.1f MB" % (size / (1024.0 * 1024.0))
+        elif size >= 1024:
+            size_text = "%.0f KB" % (size / 1024.0)
+        else:
+            size_text = "%d bytes" % size
+        self.wall_caption.set_text("%s  ·  %s" % (os.path.basename(path), size_text))
+        self.wall_set_btn.set_sensitive(True)
+        if preview_error:
+            self.wall_status.set_text("Preview unavailable: %s" % preview_error)
+
+    def _populate_wallpapers(self, select_path=None):
+        if not hasattr(self, "wall_list"):
+            return
+        previous = select_path or self.wall_selected
+        current = _current_wallpaper()
+        files = _wallpaper_files(self.wall_dir)
+        self._clear_container(self.wall_list)
+        self.wall_rows = []
+        target_row = None
+        for path in files:
+            row = Gtk.ListBoxRow()
+            row._path = path
+            row._name = os.path.basename(path)
+            row.set_tooltip_text(path)
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            name = Gtk.Label(label=row._name)
+            name.set_xalign(0)
+            name.set_hexpand(True)
+            name.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+            box.append(name)
+            if current and os.path.realpath(path) == os.path.realpath(current):
+                badge = Gtk.Label(label="current")
+                badge.add_css_class("dim-label")
+                box.append(badge)
+            row.set_child(box)
+            self.wall_list.append(row)
+            self.wall_rows.append(row)
+            if previous and os.path.realpath(path) == os.path.realpath(previous):
+                target_row = row
+        if target_row is None:
+            for row in self.wall_rows:
+                if current and os.path.realpath(row._path) == os.path.realpath(current):
+                    target_row = row
+                    break
+        if target_row is None and self.wall_rows:
+            target_row = self.wall_rows[0]
+        self.wall_count.set_text("%d wallpaper%s" % (
+            len(files), "" if len(files) == 1 else "s"))
+        self._filter_wallpapers()
+        if target_row is not None:
+            self.wall_list.select_row(target_row)
+            self._show_wallpaper(target_row)
+        else:
+            self.wall_selected = None
+            self.wall_pic.set_paintable(None)
+            self.wall_caption.set_text(
+                "No images found in %s" % shortpath(self.wall_dir))
+            self.wall_set_btn.set_sensitive(False)
+
+    def _filter_wallpapers(self, _entry=None):
+        if not hasattr(self, "wall_search") or not hasattr(self, "wall_rows"):
+            return
+        query = self.wall_search.get_text().strip().casefold()
+        shown = 0
+        for row in self.wall_rows:
+            visible = not query or query in row._name.casefold()
+            row.set_visible(visible)
+            if visible:
+                shown += 1
+        total = len(self.wall_rows)
+        if query:
+            self.wall_count.set_text("%d of %d" % (shown, total))
+        else:
+            self.wall_count.set_text("%d wallpaper%s" % (
+                total, "" if total == 1 else "s"))
+
+    def _apply_wallpaper(self, path=None):
+        path = path or self.wall_selected
+        if not path or not os.path.isfile(path):
+            self.wall_status.set_text("Select a wallpaper first.")
+            return
+        self.wall_set_btn.set_sensitive(False)
+        self.wall_status.set_text("Applying wallpaper…")
+        script = _light_wallpaper()
+        if script:
+            def worker():
+                try:
+                    proc = subprocess.run(
+                        [script, path], capture_output=True, text=True, timeout=45)
+                    code = proc.returncode
+                    err = (proc.stderr or "").strip()
+                except (OSError, subprocess.SubprocessError) as ex:
+                    code, err = 1, str(ex)
+                GLib.idle_add(self._wallpaper_done, path, code, err)
+
+            threading.Thread(target=worker, daemon=True).start()
+            return
+        self._apply_wallpaper_fallback(path)
+
+    def _apply_wallpaper_fallback(self, path):
+        if os.path.islink(WALLPAPER_LINK):
+            try:
+                tmp = WALLPAPER_LINK + ".tmp"
+                if os.path.lexists(tmp):
+                    os.unlink(tmp)
+                os.symlink(path, tmp)
+                os.replace(tmp, WALLPAPER_LINK)
+            except OSError:
+                pass
+        swaybg = shutil.which("swaybg")
+        if not swaybg:
+            self._wallpaper_done(path, 1, "swaybg is not installed")
+            return
+        service_active = False
+        try:
+            service_active = subprocess.run(
+                ["systemctl", "--user", "is-active", "--quiet", "swaybg.service"],
+                timeout=3).returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            pass
+        if service_active and os.path.islink(WALLPAPER_LINK):
+            try:
+                subprocess.run(
+                    ["systemctl", "--user", "restart", "swaybg.service"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    timeout=8)
+                self._wallpaper_done(path, 0, "")
+            except (OSError, subprocess.SubprocessError) as ex:
+                self._wallpaper_done(path, 1, str(ex))
+            return
+        try:
+            subprocess.run(
+                ["pkill", "-x", "swaybg"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
+        except (OSError, subprocess.SubprocessError):
+            pass
+        try:
+            subprocess.Popen(
+                [swaybg, "-m", "fill", "-i", path],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True)
+        except OSError as ex:
+            self._wallpaper_done(path, 1, "could not start swaybg: %s" % ex)
+            return
+        self._wallpaper_done(path, 0, "")
+
+    def _wallpaper_done(self, path, code, error):
+        self.wall_set_btn.set_sensitive(True)
+        if code == 0:
+            _write_text(WALLPAPER_STATE, path)
+            self.wall_status.set_text("Wallpaper applied · %s" % os.path.basename(path))
+            self._populate_wallpapers(select_path=path)
+        else:
+            detail = error.splitlines()[-1] if error else "exit code %s" % code
+            self.wall_status.set_text("Wallpaper failed: %s" % detail)
+        return False
+
+    def _quick_pick_wallpaper(self, _b=None):
+        script = _light_wallpaper()
+        fuzzel = shutil.which("fuzzel")
+        if not script and not fuzzel:
+            self.wall_status.set_text("fuzzel is not installed.")
+            return
+        self.wall_status.set_text("Fuzzel picker open…")
+        self.wall_set_btn.set_sensitive(False)
+        before = _current_wallpaper()
+
+        def worker():
+            choice = ""
+            try:
+                if script:
+                    proc = subprocess.run([script], timeout=300)
+                    GLib.idle_add(self._quick_pick_done, proc.returncode, "",
+                                  before)
+                    return
+                names = [os.path.basename(p) for p in _wallpaper_files(self.wall_dir)]
+                if not names:
+                    GLib.idle_add(self._quick_pick_done, 1, "", before)
+                    return
+                proc = subprocess.run(
+                    [fuzzel, "--dmenu", "--prompt=Wallpaper "],
+                    input="\n".join(names), capture_output=True, text=True,
+                    timeout=300)
+                choice = (proc.stdout or "").strip()
+            except (OSError, subprocess.SubprocessError):
+                choice = ""
+            GLib.idle_add(self._quick_pick_done, 0 if choice else 1, choice,
+                          before)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _quick_pick_done(self, code, choice, before=None):
+        if choice:
+            self._apply_wallpaper(os.path.join(self.wall_dir, choice))
+            return False
+        self.wall_set_btn.set_sensitive(True)
+        if code == 0:
+            current = _current_wallpaper()
+            self._populate_wallpapers(select_path=current)
+            if current and current != before:
+                self.wall_status.set_text("Wallpaper updated from fuzzel pick.")
+            else:
+                self.wall_status.set_text("No wallpaper change.")
+        else:
+            self.wall_status.set_text("Fuzzel picker closed.")
+        return False
 
     def b_windowrules(self):
         if not WINDOWRULES or not os.path.isfile(WINDOWRULES):
@@ -2100,7 +2785,7 @@ def parse_args(argv):
                     help="Mango config directory (default: ~/.config/mango)")
     ap.add_argument("--tab", metavar="ID",
                     help="open a tab directly (layout, theme, colors, cursor, mouse, "
-                         "touchpad, keys, outputs, rules)")
+                         "touchpad, keys, wallpaper, outputs, night, rules)")
     ap.add_argument("--no-reload", action="store_true",
                     help="write and validate, but do not reload Mango")
     ap.add_argument("--version", action="version",

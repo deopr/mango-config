@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.0 — 2026-10-31
+
+Add Wallpaper and Night light pages.
+
+- New **Wallpaper** page under Appearance: filenames on the left, live image
+  preview on the right, search, current-wallpaper marker, and a Fuzzel
+  text-only quick pick.
+- Wallpaper applies through `light-wallpaper` when available (keeping palette
+  and shell sync), with a `swaybg` fallback for other setups.
+- New **Night light** page under Display: enable/disable gammastep and set a
+  color temperature from 2000K to 6500K. Settings are remembered; apply is
+  live and session-only.
+- Wallpaper and Night light are separate from the global Apply flow and never
+  rewrite Mango config.
+- Version/docs/tests updated; wallpaper scanning and new page construction are
+  covered by the test suite.
+
 ## 0.1.1 — 2026-10-29
 
 Fix window rules handling:

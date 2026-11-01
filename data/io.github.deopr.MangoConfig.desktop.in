@@ -7,6 +7,6 @@ Exec=@EXEC@
 Icon=io.github.deopr.MangoConfig
 Terminal=false
 Categories=Settings;DesktopSettings;
-Keywords=mango;wayland;compositor;settings;config;gtk;
+Keywords=mango;wayland;compositor;settings;config;wallpaper;nightlight;gtk;
 StartupNotify=true
 StartupWMClass=io.github.deopr.MangoConfig

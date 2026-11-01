@@ -16,6 +16,8 @@ touch. Every Apply is validated and backed up.
 | ![Theme colors](docs/screenshots/theme-colors.png) | ![Base colors](docs/screenshots/base-colors.png) |
 | **Outputs** | **Keybinds** |
 | ![Outputs](docs/screenshots/outputs.png) | ![Keybinds](docs/screenshots/keybinds.png) |
+| **Wallpaper** | **Night light** |
+| ![Wallpaper](docs/screenshots/wallpaper.png) | ![Night light](docs/screenshots/night-light.png) |
 
 ## Features
 
@@ -26,13 +28,23 @@ touch. Every Apply is validated and backed up.
   takes effect.
 - **Cursor, mouse and touchpad** — size, theme, acceleration, scrolling,
   tapping and gesture options.
+- **Wallpaper** — names on the left, a live preview on the right, search and a
+  current-wallpaper marker. Uses `light-wallpaper` when available (palette
+  sync), otherwise starts `swaybg`. A Fuzzel quick pick is included as an
+  optional text-only shortcut.
 - **Outputs** — detected monitors, multiple `monitor_rule` entries, resolution,
   refresh rate, scale, position, transform, VRR, HDR, primary and Custom mode.
+- **Night light** — live `gammastep` control under Display: enable, set a color
+  temperature, and apply immediately. The last temperature is remembered.
 - **Window rules** — floating rules per app.
 - **Keybinds** — searchable, grouped by compositor vs apps, keycap-style combos
   with per-bind editing.
 - **Display guard** — after an output change, an inline 10-second countdown
   asks you to keep or revert. If the timer runs out, it reverts automatically.
+
+The Wallpaper and Night light pages apply immediately with their own buttons.
+They do not edit the Mango config and are intentionally outside the global
+Apply-and-reload flow.
 
 ## Requirements
 
@@ -40,17 +52,30 @@ touch. Every Apply is validated and backed up.
 - Python 3.10+
 - GTK 4.10+ and PyGObject
 
+Optional, for the extra pages:
+
+- `gammastep` — Night light page.
+- `swaybg` — Wallpaper page fallback. If `light-wallpaper` is on `PATH`, the
+  app calls it instead so palette/shell sync keeps working.
+- `fuzzel` — text-only Wallpaper quick pick.
+
 Install the toolkit on your distro:
 
 ```bash
 # Fedora
 sudo dnf install python3-gobject gtk4
+# optional extras
+sudo dnf install gammastep swaybg fuzzel
 
 # Arch
 sudo pacman -S python-gobject gtk4
+# optional extras
+sudo pacman -S gammastep swaybg fuzzel
 
 # Ubuntu / Debian
 sudo apt install python3-gi gir1.2-gtk-4.0
+# optional extras
+sudo apt install gammastep swaybg fuzzel
 ```
 
 ## Install
@@ -131,13 +156,15 @@ Output changes additionally show the inline keep/revert guard.
 ```bash
 mango-config                      # normal launch
 mango-config --tab keys           # open a tab directly
+mango-config --tab wallpaper      # names + live preview picker
+mango-config --tab night          # gammastep night light controls
 mango-config --config-dir ~/dotfiles/mango
 mango-config --no-reload          # write and validate only
 mango-config --version
 ```
 
-Tab IDs: `layout`, `theme`, `colors`, `cursor`, `mouse`, `touchpad`, `keys`,
-`outputs`, `rules`.
+Tab IDs: `layout`, `theme`, `colors`, `cursor`, `wallpaper`, `mouse`,
+`touchpad`, `keys`, `outputs`, `night`, `rules`.
 
 ## Inspiration
 
@@ -156,6 +183,10 @@ reversible applies.
   tools. Override the values in a later source file if you need them permanent.
 - The app edits text, not semantics: keep comments and unusual keys where they
   are, but always review the diff if you hand-edit around it.
+- Night light is session-only. It does not create an autostart service; configure
+  `gammastep` for login/schedule behavior if you need it permanent.
+- Fuzzel is text-only, so the image preview lives in the Wallpaper page. The
+  Fuzzel quick pick is there for keyboard-first use.
 
 ## Development
 
@@ -169,6 +200,7 @@ Tests:
 
 ```bash
 python3 tests/test_discovery.py
+xvfb-run -a python3 tests/test_apply.py
 bash tests/test_install.sh
 ```
 
