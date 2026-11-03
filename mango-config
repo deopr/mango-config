@@ -353,6 +353,7 @@ class XkbLayoutPicker(Gtk.MenuButton):
         ]
         if query:
             matches.sort(key=lambda item: (
+                0 if item[0] == self._code else 1,
                 0 if item[0].casefold() == query or item[1].casefold().startswith(query) else 1,
                 item[1].casefold()))
         else:
