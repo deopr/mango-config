@@ -264,6 +264,131 @@ def kb_bind_tokens(mods, key):
     return tokens
 
 
+class XkbLayoutPicker(Gtk.MenuButton):
+    """A layout picker with a live, always-filtering search field."""
+
+    def __init__(self, options, current):
+        super().__init__()
+        self.options = list(options)
+        self.labels = {code: label for code, label in self.options}
+        self._code = current
+        self.add_css_class("xkb-picker")
+        self.set_tooltip_text("Choose a keyboard layout")
+
+        self._label = Gtk.Label(label=self.labels.get(current, current))
+        self._label.set_xalign(0)
+        self._label.set_hexpand(True)
+        self._label.set_ellipsize(Pango.EllipsizeMode.END)
+        self._label.set_max_width_chars(30)
+        child = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        child.append(self._label)
+        child.append(Gtk.Image.new_from_icon_name("pan-down-symbolic"))
+        self.set_child(child)
+
+        pop = Gtk.Popover()
+        self.set_popover(pop)
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        outer.set_margin_top(8)
+        outer.set_margin_bottom(8)
+        outer.set_margin_start(8)
+        outer.set_margin_end(8)
+
+        self._search = Gtk.SearchEntry()
+        self._search.set_placeholder_text("Search layouts…")
+        self._search.set_hexpand(True)
+        # notify::text is immediate; GtkSearchEntry's search-changed signal
+        # deliberately waits for search-delay, which made the old dropdown feel
+        # like it ignored a query that was already on screen.
+        self._search.connect("notify::text", lambda _e, _p: self._rebuild_rows())
+        outer.append(self._search)
+
+        self._list = Gtk.ListBox()
+        self._list.add_css_class("xkb-layout-list")
+        self._list.set_selection_mode(Gtk.SelectionMode.NONE)
+        self._list.connect("row-activated", self._on_row_activated)
+        self._scroll = Gtk.ScrolledWindow()
+        self._scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self._scroll.set_min_content_width(360)
+        self._scroll.set_min_content_height(320)
+        self._scroll.set_child(self._list)
+        outer.append(self._scroll)
+        pop.set_child(outer)
+
+        self.connect("notify::active", self._on_popover_active)
+        self._rebuild_rows()
+
+    def get_code(self):
+        return self._code
+
+    def set_code(self, code):
+        if code == self._code:
+            return
+        self._code = code
+        self._label.set_text(self.labels.get(code, code))
+
+    def _on_popover_active(self, *_args):
+        if not self.get_active():
+            return
+        self._search.set_text("")
+        self._rebuild_rows()
+        GLib.idle_add(self._focus_search)
+
+    def _focus_search(self):
+        self._search.grab_focus()
+        return False
+
+    def _clear_rows(self):
+        child = self._list.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            self._list.remove(child)
+            child = nxt
+
+    def _rebuild_rows(self):
+        query = (self._search.get_text() or "").strip().casefold()
+        self._clear_rows()
+        matches = [
+            (code, label) for code, label in self.options
+            if not query or query in label.casefold() or query in code.casefold()
+        ]
+        if query:
+            matches.sort(key=lambda item: (
+                0 if item[0].casefold() == query or item[1].casefold().startswith(query) else 1,
+                item[1].casefold()))
+        else:
+            matches.sort(key=lambda item: (
+                0 if item[0] == self._code else 1, item[1].casefold()))
+        for code, label in matches:
+            row = Gtk.ListBoxRow()
+            row.set_activatable(True)
+            row._layout_code = code
+            row._layout_label = label
+            if code == self._code:
+                row.add_css_class("xkb-layout-selected")
+            lbl = Gtk.Label(label=label)
+            lbl.set_xalign(0)
+            lbl.set_ellipsize(Pango.EllipsizeMode.END)
+            row.set_child(lbl)
+            self._list.append(row)
+        if not matches:
+            row = Gtk.ListBoxRow()
+            row.set_activatable(False)
+            lbl = Gtk.Label(label="No matching layouts")
+            lbl.add_css_class("dim-label")
+            lbl.set_xalign(0)
+            row.set_child(lbl)
+            self._list.append(row)
+
+    def _on_row_activated(self, _listbox, row):
+        code = getattr(row, "_layout_code", None)
+        if not code:
+            return
+        label = getattr(row, "_layout_label", code)
+        self._code = code
+        self._label.set_text(label)
+        self.set_active(False)
+
+
 def shortpath(path):
     if not path:
         return "not found"
@@ -1685,6 +1810,12 @@ class App(Gtk.Application):
                 color: #ffffff;
             }
             .kbmap-mod { font-weight: 800; }
+            .xkb-picker { min-width: 240px; }
+            .xkb-picker label { font-weight: 600; }
+            .xkb-layout-list { padding: 2px; }
+            .xkb-layout-list row { border-radius: 6px; padding: 5px 8px; }
+            .xkb-layout-list row:hover { background: alpha(currentColor, 0.10); }
+            .xkb-layout-selected { background: alpha(#5aa7ff, 0.16); }
             .color-card { padding: 2px; }
             .color-swatch { min-height: 46px; border-radius: 10px; }
             .color-name { font-weight: 700; font-size: 0.95em; }
@@ -2042,15 +2173,8 @@ class App(Gtk.Application):
 
         current = (get_simple(lines, "xkb_rules_layout", "us") or "us").strip()
         options = self._xkb_layout_options()
-        codes = [code for code, _name in options]
-        labels = [name for _code, name in options]
-        if current not in codes:
-            codes.insert(0, current)
-            labels.insert(0, "Current: " + current)
-        try:
-            selected = codes.index(current)
-        except ValueError:
-            selected = 0
+        if current not in {code for code, _name in options}:
+            options.insert(0, (current, "Current: " + current))
 
         page = Gtk.ScrolledWindow()
         page.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -2060,15 +2184,11 @@ class App(Gtk.Application):
         page.set_child(box)
 
         layout_section = Section("Keyboard layout")
-        layout_dd = Gtk.DropDown.new_from_strings(labels)
-        layout_dd.set_enable_search(True)
-        layout_dd.set_selected(selected)
-        layout_dd.set_hexpand(False)
-        self._dropdown_themes[layout_dd] = codes
-        self.keyboard_layout = layout_dd
-        self.field(layout_dd, "dropdown", target, "xkb_rules_layout", add_missing=True)
+        layout_picker = XkbLayoutPicker(options, current)
+        self.keyboard_layout = layout_picker
+        self.field(layout_picker, "xkb_layout", target, "xkb_rules_layout", add_missing=True)
         self.controls[-1]["initial"] = current
-        layout_section.add_row("Layout", layout_dd)
+        layout_section.add_row("Layout", layout_picker)
 
         variant = self._entry(get_simple(lines, "xkb_rules_variant", "") or "")
         variant.set_placeholder_text("optional, e.g. intl or dvorak")
@@ -4254,6 +4374,9 @@ class App(Gtk.Application):
                     if cur and cur in themes:
                         idx = themes.index(cur)
                     w.set_selected(idx)
+            elif kind == "xkb_layout":
+                if hasattr(w, "set_code"):
+                    w.set_code(cur)
             elif kind == "color":
                 try:
                     w.set_rgba(hex_to_rgba(cur))
@@ -4352,6 +4475,8 @@ class App(Gtk.Application):
                 themes = self._dropdown_themes.get(w, [])
                 sel = w.get_selected()
                 new = themes[sel] if isinstance(sel, int) and 0 <= sel < len(themes) else cur
+            elif kind == "xkb_layout":
+                new = w.get_code()
             elif kind == "color":
                 try:
                     old_rgba = hex_to_rgba(cur)
