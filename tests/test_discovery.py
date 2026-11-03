@@ -53,6 +53,14 @@ check("dms: binds outside dms", r["binds"] == "binds.conf", str(r))
 check("dms: base colors use effective later file", r["colors"] == "noctalia.conf", str(r))
 check("dms: theme", r["theme"] == "noctalia.conf", str(r))
 
+check("keyboard token: super", mc.kb_bind_tokens("SUPER", "P") == {"super", "p"})
+check("keyboard token: aliases",
+      mc.kb_bind_tokens("MOD4+CONTROL", "Page_Up") == {"super", "ctrl", "pageup"})
+check("keyboard token: no mods", mc.kb_bind_tokens("", "F9") == {"f9"})
+check("keyboard map: rows have valid key widths",
+      all(sum(span for _label, _token, span in row) in (13, 15)
+          for row in mc.KB_MAIN_ROWS))
+
 with tempfile.TemporaryDirectory() as td:
     open(os.path.join(td, "config.toml"), "w").write("[general]\n")
     p, r = roles(td)
@@ -76,7 +84,7 @@ check("CLI version", out.returncode == 0 and out.stdout.strip() == "mango-config
 out = subprocess.run([sys.executable, APP, "--help"], capture_output=True, text=True)
 check("CLI help", out.returncode == 0 and "--config-dir" in out.stdout and "--tab" in out.stdout)
 check("CLI help lists new tabs",
-      all(t in out.stdout for t in ("wallpaper", "night", "brightness", "apps")),
+      all(t in out.stdout for t in ("wallpaper", "night", "brightness", "apps", "keyboard")),
       out.stdout)
 
 with tempfile.TemporaryDirectory() as td:

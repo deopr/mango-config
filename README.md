@@ -32,6 +32,8 @@ touch. Every Apply is validated and backed up.
   takes effect.
 - **Cursor, mouse and touchpad** — size, theme, acceleration, scrolling,
   tapping and gesture options.
+- **Keyboard** — XKB layout, variant and options. The active Mango layout is
+  shown; saving adds `xkb_rules_layout` to the input file when it is missing.
 - **Wallpaper** — names on the left, a monitor-shaped live preview on the
   right, search and a current-wallpaper marker. Choose Fill, Fit, Stretch,
   Center or Tile, rotate in 90° steps, and flip horizontally or vertically.
@@ -60,7 +62,9 @@ touch. Every Apply is validated and backed up.
   Each action card can hold multiple shortcuts (for example `Super+Return` and
   `Super+T` for kitty); add or remove shortcuts, and edit the action or args
   once for the whole group. Shortcuts use one Combo field, so full chords such
-  as `Super+Ctrl+P` and `Super+Shift+Alt+T` work directly.
+  as `Super+Ctrl+P` and `Super+Shift+Alt+T` work directly. The new experimental
+  keyboard map at the top filters the list by clicking keys: click `Super` to
+  see every Super bind, then click another key to narrow it to that chord.
 - **Display guard** — after an output change, an inline 10-second countdown
   asks you to keep or revert. If the timer runs out, it reverts automatically.
 
@@ -180,7 +184,8 @@ Output changes additionally show the inline keep/revert guard.
 
 ```bash
 mango-config                      # normal launch
-mango-config --tab keys           # open a tab directly
+mango-config --tab keys           # keybind list with the keyboard map
+mango-config --tab keyboard       # XKB layout, variant and options
 mango-config --tab wallpaper      # names + fit options + live preview
 mango-config --tab brightness     # screen brightness slider
 mango-config --tab apps           # default terminal/file manager/browser
@@ -190,8 +195,8 @@ mango-config --no-reload          # write and validate only
 mango-config --version
 ```
 
-Tab IDs: `layout`, `theme`, `colors`, `cursor`, `wallpaper`, `mouse`,
-`touchpad`, `keys`, `outputs`, `brightness`, `night`, `apps`, `rules`.
+Tab IDs: `layout`, `theme`, `colors`, `cursor`, `wallpaper`, `keyboard`,
+`mouse`, `touchpad`, `keys`, `outputs`, `brightness`, `night`, `apps`, `rules`.
 
 ## Inspiration
 

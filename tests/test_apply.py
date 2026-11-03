@@ -78,6 +78,17 @@ def run_one(profile_dir, label):
     assert hasattr(app, "app_dropdowns") and len(app.app_dropdowns) == 3, (
         "%s: default app preferences missing" % label)
     assert hasattr(app, "apps_apply"), "%s: default apps save button missing" % label
+    assert hasattr(app, "kb_key_buttons") and hasattr(app, "keyboard_layout"), (
+        "%s: keyboard map / layout page missing" % label)
+
+    super_buttons = app.kb_key_buttons.get("super", [])
+    if super_buttons:
+        super_buttons[0].set_active(True)
+        visible = [g for g in app.kb_cards if g["card"].get_visible()]
+        assert visible and all("super" in g["card"]._kb_tokens for g in visible), (
+            "%s: Super key filter showed an unbound action" % label)
+        app._clear_kb_filter()
+        assert not app.kb_key_filter, "%s: keyboard filter did not clear" % label
 
     app.on_apply(None)
     hash1 = digest(profile_dir)

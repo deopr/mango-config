@@ -100,6 +100,8 @@ ROLE_KEYS = {
         "trackpad_accel_speed", "trackpad_natural_scrolling",
         "trackpad_scroll_factor", "trackpad_disable_while_typing",
         "trackpad_middle_button_emulation", "trackpad_send_events_mode",
+        "xkb_rules_layout", "xkb_rules_variant", "xkb_rules_options",
+        "xkb_rules_rules", "xkb_rules_model",
     },
     "cursor": {"cursor_size", "cursor_theme"},
     "outputs": {"monitor_rule"},
@@ -161,6 +163,105 @@ WR_HELP_VARS = [
     ("no_radius", "1 disables rounded corners."),
     ("no_animation", "1 disables open and close animations."),
 ]
+
+# Fallback list used when the system XKB rules database cannot be read.
+COMMON_XKB_LAYOUTS = [
+    ("us", "English (US)"),
+    ("gb", "English (UK)"),
+    ("br", "Portuguese (Brazil)"),
+    ("pt", "Portuguese (Portugal)"),
+    ("es", "Spanish"),
+    ("fr", "French"),
+    ("de", "German"),
+    ("it", "Italian"),
+    ("nl", "Dutch"),
+    ("ru", "Russian"),
+    ("jp", "Japanese"),
+    ("kr", "Korean"),
+    ("cn", "Chinese"),
+]
+
+# A compact US-ANSI reference keyboard. Tokens are normalized below so they
+# match Mango bind key names (SUPER+P, Page_Up, Return, and so on).
+KB_MAIN_ROWS = [
+    [("Esc", "escape", 1), ("F1", "f1", 1), ("F2", "f2", 1), ("F3", "f3", 1),
+     ("F4", "f4", 1), ("F5", "f5", 1), ("F6", "f6", 1), ("F7", "f7", 1),
+     ("F8", "f8", 1), ("F9", "f9", 1), ("F10", "f10", 1), ("F11", "f11", 1),
+     ("F12", "f12", 1)],
+    [("`", "grave", 1), ("1", "1", 1), ("2", "2", 1), ("3", "3", 1),
+     ("4", "4", 1), ("5", "5", 1), ("6", "6", 1), ("7", "7", 1),
+     ("8", "8", 1), ("9", "9", 1), ("0", "0", 1), ("-", "minus", 1),
+     ("=", "equal", 1), ("Backspace", "backspace", 2)],
+    [("Tab", "tab", 2), ("Q", "q", 1), ("W", "w", 1), ("E", "e", 1),
+     ("R", "r", 1), ("T", "t", 1), ("Y", "y", 1), ("U", "u", 1),
+     ("I", "i", 1), ("O", "o", 1), ("P", "p", 1), ("[", "bracketleft", 1),
+     ("]", "bracketright", 1), ("\\", "backslash", 1)],
+    [("Caps", "caps_lock", 2), ("A", "a", 1), ("S", "s", 1), ("D", "d", 1),
+     ("F", "f", 1), ("G", "g", 1), ("H", "h", 1), ("J", "j", 1),
+     ("K", "k", 1), ("L", "l", 1), (";", "semicolon", 1),
+     ("'", "apostrophe", 1), ("Enter", "return", 2)],
+    [("Shift", "shift", 3), ("Z", "z", 1), ("X", "x", 1), ("C", "c", 1),
+     ("V", "v", 1), ("B", "b", 1), ("N", "n", 1), ("M", "m", 1),
+     (",", "comma", 1), (".", "period", 1), ("/", "slash", 1),
+     ("Shift", "shift", 2)],
+    [("Ctrl", "ctrl", 2), ("Super", "super", 2), ("Alt", "alt", 2),
+     ("Space", "space", 5), ("Alt", "alt", 1), ("Super", "super", 1),
+     ("Menu", "menu", 1), ("Ctrl", "ctrl", 1)],
+]
+
+KB_NAV_ROWS = [
+    [("PrtSc", "print", 1), ("ScrLk", "scroll_lock", 1), ("Pause", "pause", 1)],
+    [("Ins", "insert", 1), ("Home", "home", 1), ("PgUp", "pageup", 1)],
+    [("Del", "delete", 1), ("End", "end", 1), ("PgDn", "pagedown", 1)],
+    [("", None, 1), ("↑", "up", 1), ("", None, 1)],
+    [("←", "left", 1), ("↓", "down", 1), ("→", "right", 1)],
+]
+
+KB_MOD_TOKENS = {"super", "ctrl", "alt", "shift"}
+KB_TOKEN_ALIASES = {
+    "control": "ctrl", "mod1": "alt", "mod4": "super", "meta": "super",
+    "command": "super", "cmd": "super", "none": "",
+    "esc": "escape", "enter": "return", "return": "return",
+    "capslock": "caps_lock", "caps": "caps_lock",
+    "prior": "pageup", "page_up": "pageup", "pgup": "pageup",
+    "next": "pagedown", "page_down": "pagedown", "pgdn": "pagedown",
+    "del": "delete", "ins": "insert", "printscreen": "print",
+    "prtsc": "print", "scrolllock": "scroll_lock",
+    "`": "grave", "~": "grave", "-": "minus", "=": "equal",
+    "[": "bracketleft", "]": "bracketright", "\\": "backslash",
+    ";": "semicolon", "'": "apostrophe", ",": "comma", ".": "period",
+    "/": "slash", " ": "space",
+}
+KB_FILTER_LABELS = {
+    "super": "Super", "ctrl": "Ctrl", "alt": "Alt", "shift": "Shift",
+    "escape": "Esc", "return": "Enter", "space": "Space",
+    "backspace": "Backspace", "tab": "Tab", "caps_lock": "Caps",
+    "pageup": "Page Up", "pagedown": "Page Down", "insert": "Insert",
+    "delete": "Delete", "print": "Print Screen", "scroll_lock": "Scroll Lock",
+    "grave": "`", "minus": "-", "equal": "=", "bracketleft": "[",
+    "bracketright": "]", "backslash": "\\", "semicolon": ";",
+    "apostrophe": "'", "comma": ",", "period": ".", "slash": "/", "menu": "Menu",
+}
+
+
+def kb_token(value):
+    """Normalize a modifier or key name from a bind or the visual keyboard."""
+    token = (value or "").strip().lower().replace("-", "_")
+    token = KB_TOKEN_ALIASES.get(token, token)
+    return token
+
+
+def kb_bind_tokens(mods, key):
+    """Return the set of keyboard-map tokens used by one bind."""
+    tokens = set()
+    for part in (mods or "").split("+"):
+        token = kb_token(part)
+        if token:
+            tokens.add(token)
+    token = kb_token(key)
+    if token:
+        tokens.add(token)
+    return tokens
 
 
 def shortpath(path):
@@ -1267,9 +1368,10 @@ class App(Gtk.Application):
             pass
         return btn
 
-    def field(self, widget, kind, path, key, order=None, index=None):
+    def field(self, widget, kind, path, key, order=None, index=None, add_missing=False):
         self.controls.append({"widget": widget, "kind": kind, "path": path, "key": key,
-                              "order": order, "index": index})
+                              "order": order, "index": index,
+                              "add_missing": add_missing})
 
     def do_activate(self):
         win = Gtk.ApplicationWindow(application=self)
@@ -1315,6 +1417,8 @@ class App(Gtk.Application):
                  "Browse wallpapers with a preview, then apply one."),
             ]),
             ("Input", [
+                ("Keyboard", "keyboard", self.b_keyboard, "input-keyboard", INPUT,
+                 "XKB layout, variant and options for the keyboard."),
                 ("Mouse", "mouse", self.b_input_mouse, "input-mouse", INPUT,
                  "Pointer speed, acceleration and natural scrolling."),
                 ("Touchpad", "touchpad", self.b_input_touchpad, "input-touchpad", INPUT,
@@ -1552,6 +1656,35 @@ class App(Gtk.Application):
                 font-weight: 700;
                 font-size: 0.95em;
             }
+            .kbmap {
+                background: alpha(currentColor, 0.035);
+                border: 1px solid alpha(currentColor, 0.08);
+                border-radius: 12px;
+                padding: 8px;
+            }
+            .kbmap-title { font-weight: 800; font-size: 1.02em; }
+            .kbmap-key {
+                min-height: 30px;
+                min-width: 28px;
+                padding: 0 3px;
+                border-radius: 6px;
+                font-size: 0.74em;
+                font-weight: 600;
+                background: alpha(currentColor, 0.055);
+                border: 1px solid alpha(currentColor, 0.06);
+                box-shadow: none;
+            }
+            .kbmap-key:hover { background: alpha(currentColor, 0.12); }
+            .kbmap-key.bound {
+                background: alpha(#5aa7ff, 0.18);
+                border-color: alpha(#5aa7ff, 0.38);
+            }
+            .kbmap-key:checked {
+                background: alpha(#5aa7ff, 0.85);
+                border-color: alpha(#5aa7ff, 0.95);
+                color: #ffffff;
+            }
+            .kbmap-mod { font-weight: 800; }
             .color-card { padding: 2px; }
             .color-swatch { min-height: 46px; border-radius: 10px; }
             .color-name { font-weight: 700; font-size: 0.95em; }
@@ -1844,6 +1977,130 @@ class App(Gtk.Application):
         note.add_css_class("dim-label")
         note.set_wrap(True)
         note.set_xalign(0)
+        box.append(note)
+        box.append(Gtk.Box(hexpand=True))
+        return page
+
+    def _xkb_layout_options(self):
+        """Return (code, label) pairs from the system XKB rules database."""
+        rows = []
+        seen = set()
+        base = "/usr/share/X11/xkb/rules/base.lst"
+        try:
+            in_layout = False
+            with open(base, encoding="utf-8", errors="replace") as fh:
+                for raw in fh:
+                    if raw.startswith("! layout"):
+                        in_layout = True
+                        continue
+                    if raw.startswith("!"):
+                        in_layout = False
+                        continue
+                    if not in_layout:
+                        continue
+                    parts = raw.strip().split(None, 1)
+                    if not parts or parts[0].startswith("!"):
+                        continue
+                    code = parts[0].strip()
+                    name = parts[1].strip() if len(parts) > 1 else code
+                    if code and code not in seen:
+                        seen.add(code)
+                        rows.append((code, name))
+        except OSError:
+            pass
+        if not rows:
+            rows = list(COMMON_XKB_LAYOUTS)
+        return rows
+
+    def _live_keyboard_layout(self):
+        """Ask Mango which layout is currently active, if IPC is available."""
+        if not shutil.which("mmsg"):
+            return ""
+        try:
+            out = subprocess.run(
+                ["mmsg", "get", "keyboardlayout"],
+                capture_output=True, text=True, timeout=2)
+            if out.returncode != 0:
+                return ""
+            data = json.loads(out.stdout)
+            return str(data.get("layout") or "")
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return ""
+
+    def b_keyboard(self):
+        target = INPUT
+        if not target or not os.path.isfile(target):
+            return self._empty_page(
+                "No input file found. Add keyboard settings to config.conf or source an input file from it.")
+        lines = read_lines(target)
+        for path in self._profile_paths():
+            if path and path != target and os.path.isfile(path):
+                other = read_lines(path)
+                if get_simple(other, "xkb_rules_layout") is not None:
+                    target, lines = path, other
+                    break
+
+        current = (get_simple(lines, "xkb_rules_layout", "us") or "us").strip()
+        options = self._xkb_layout_options()
+        codes = [code for code, _name in options]
+        labels = [name for _code, name in options]
+        if current not in codes:
+            codes.insert(0, current)
+            labels.insert(0, "Current: " + current)
+        try:
+            selected = codes.index(current)
+        except ValueError:
+            selected = 0
+
+        page = Gtk.ScrolledWindow()
+        page.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        box.set_margin_top(10); box.set_margin_start(12); box.set_margin_end(12); box.set_margin_bottom(10)
+        box.set_hexpand(True)
+        page.set_child(box)
+
+        layout_section = Section("Keyboard layout")
+        layout_dd = Gtk.DropDown.new_from_strings(labels)
+        layout_dd.set_enable_search(True)
+        layout_dd.set_selected(selected)
+        layout_dd.set_hexpand(False)
+        self._dropdown_themes[layout_dd] = codes
+        self.keyboard_layout = layout_dd
+        self.field(layout_dd, "dropdown", target, "xkb_rules_layout", add_missing=True)
+        self.controls[-1]["initial"] = current
+        layout_section.add_row("Layout", layout_dd)
+
+        variant = self._entry(get_simple(lines, "xkb_rules_variant", "") or "")
+        variant.set_placeholder_text("optional, e.g. intl or dvorak")
+        self.keyboard_variant = variant
+        self.field(variant, "str", target, "xkb_rules_variant", add_missing=True)
+        self.controls[-1]["initial"] = get_simple(lines, "xkb_rules_variant", "") or ""
+        layout_section.add_row("Variant", variant)
+
+        xkb_options = self._entry(get_simple(lines, "xkb_rules_options", "") or "")
+        xkb_options.set_placeholder_text("optional, e.g. grp:alt_shift_toggle")
+        self.keyboard_options = xkb_options
+        self.field(xkb_options, "str", target, "xkb_rules_options", add_missing=True)
+        self.controls[-1]["initial"] = get_simple(lines, "xkb_rules_options", "") or ""
+        layout_section.add_row("Options", xkb_options)
+        box.append(layout_section)
+
+        live_section = Section("Active session")
+        live = self._live_keyboard_layout()
+        live_label = Gtk.Label(label=live or "Mango did not report a layout")
+        live_label.set_xalign(0)
+        live_label.set_selectable(True)
+        live_section.add_row("Mango reports", live_label)
+        box.append(live_section)
+
+        note = Gtk.Label(
+            label="Apply writes the setting to " + shortpath(target) +
+            " and reloads Mango. A relogin may be needed for some devices. "
+            "The visual keyboard on Keybinds uses US-ANSI labels as a reference.")
+        note.add_css_class("dim-label")
+        note.set_wrap(True)
+        note.set_xalign(0)
+        note.set_margin_top(4)
         box.append(note)
         box.append(Gtk.Box(hexpand=True))
         return page
@@ -3330,6 +3587,12 @@ class App(Gtk.Application):
         top.append(add_btn)
         box.append(top)
 
+        self.kb_key_filter = set()
+        self.kb_key_buttons = {}
+        self.kb_bound_tokens = set()
+        self._kb_key_sync = False
+        box.append(self._build_kb_keyboard())
+
         self.kb_groups_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         self.kb_groups_box.set_hexpand(True)
         box.append(self.kb_groups_box)
@@ -3347,6 +3610,131 @@ class App(Gtk.Application):
         self.kb_new_exp = None
         self.build_kb_rows_from_lines()
         return page
+
+    def _build_kb_keyboard(self):
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        card.add_css_class("kbmap")
+        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        title = Gtk.Label(label="Keyboard map")
+        title.add_css_class("kbmap-title")
+        title.set_xalign(0)
+        head.append(title)
+        self.kb_filter_label = Gtk.Label(label="Click any key to filter · try Super")
+        self.kb_filter_label.add_css_class("dim-label")
+        self.kb_filter_label.set_xalign(0)
+        self.kb_filter_label.set_hexpand(True)
+        head.append(self.kb_filter_label)
+        clear = Gtk.Button(label="Clear")
+        clear.add_css_class("flat")
+        clear.set_tooltip_text("Clear the keyboard filter")
+        clear.connect("clicked", self._clear_kb_filter)
+        head.append(clear)
+        card.append(head)
+
+        holder = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        main = Gtk.Grid()
+        main.add_css_class("kbmap-grid")
+        main.set_column_homogeneous(True)
+        main.set_row_homogeneous(True)
+        main.set_column_spacing(3)
+        main.set_row_spacing(3)
+        main.set_hexpand(True)
+        for y, row in enumerate(KB_MAIN_ROWS):
+            x = 0
+            for label, token, span in row:
+                key = self._kb_map_key(label, token)
+                main.attach(key, x, y, span, 1)
+                x += span
+        holder.append(main)
+
+        nav = Gtk.Grid()
+        nav.add_css_class("kbmap-grid")
+        nav.set_column_homogeneous(True)
+        nav.set_row_homogeneous(True)
+        nav.set_column_spacing(3)
+        nav.set_row_spacing(3)
+        nav.set_size_request(150, -1)
+        for y, row in enumerate(KB_NAV_ROWS):
+            for x, (label, token, _span) in enumerate(row):
+                if token:
+                    nav.attach(self._kb_map_key(label, token), x, y, 1, 1)
+        holder.append(nav)
+        map_scroll = Gtk.ScrolledWindow()
+        map_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+        map_scroll.set_child(holder)
+        map_scroll.set_propagate_natural_height(True)
+        map_scroll.set_hexpand(True)
+        card.append(map_scroll)
+
+        hint = Gtk.Label(
+            label="Tinted keys appear in at least one bind. Click Super, then another key to narrow the list below. Click a selected key again to remove it.")
+        hint.add_css_class("dim-label")
+        hint.set_wrap(True)
+        hint.set_xalign(0)
+        card.append(hint)
+        return card
+
+    def _kb_map_key(self, label, token):
+        btn = Gtk.ToggleButton(label=label or " ")
+        btn.add_css_class("kbmap-key")
+        if token in KB_MOD_TOKENS:
+            btn.add_css_class("kbmap-mod")
+        btn.set_size_request(28, 30)
+        btn.set_hexpand(True)
+        btn.set_tooltip_text("Filter shortcuts using " + (KB_FILTER_LABELS.get(token, token)))
+        btn.connect("toggled", self._on_kb_key_toggled, token)
+        self.kb_key_buttons.setdefault(token, []).append(btn)
+        return btn
+
+    def _on_kb_key_toggled(self, btn, token):
+        if getattr(self, "_kb_key_sync", False):
+            return
+        self._kb_key_sync = True
+        active = btn.get_active()
+        if active:
+            self.kb_key_filter.add(token)
+        else:
+            self.kb_key_filter.discard(token)
+        for other in self.kb_key_buttons.get(token, []):
+            if other is not btn:
+                other.set_active(active)
+        self._kb_key_sync = False
+        self._kb_update_filter()
+
+    def _clear_kb_filter(self, *_args):
+        self._kb_key_sync = True
+        for buttons in self.kb_key_buttons.values():
+            for btn in buttons:
+                btn.set_active(False)
+        self._kb_key_sync = False
+        self.kb_key_filter.clear()
+        self._kb_update_filter()
+
+    def _kb_update_filter(self):
+        if getattr(self, "kb_filter_label", None) is None:
+            return
+        order = {"super": 0, "ctrl": 1, "alt": 2, "shift": 3}
+        keys = sorted(self.kb_key_filter, key=lambda t: (order.get(t, 9), t))
+        labels = [KB_FILTER_LABELS.get(t, t.upper() if len(t) == 1 else t.capitalize())
+                  for t in keys]
+        if labels:
+            self.kb_filter_label.set_text("Filter: " + " + ".join(labels))
+        else:
+            self.kb_filter_label.set_text("Click any key to filter · try Super")
+        self.filter_kb()
+
+    def _kb_recompute_tokens(self):
+        tokens = set()
+        for group in getattr(self, "kb_cards", []):
+            card = group.get("card") if isinstance(group, dict) else group
+            tokens |= getattr(card, "_kb_tokens", set())
+        self.kb_bound_tokens = tokens
+        for token, buttons in getattr(self, "kb_key_buttons", {}).items():
+            for btn in buttons:
+                if token in tokens:
+                    btn.add_css_class("bound")
+                else:
+                    btn.remove_css_class("bound")
 
     BIND_RE = re.compile(r"^(bind[a-z]*)=(.*)$")
     SECTION_RE = re.compile(r"^#\s*=+\s*(.+?)\s*=+$")
@@ -3467,6 +3855,11 @@ class App(Gtk.Application):
         self.kb_new_exp = exp_new
         self.kb_groups_box.append(exp_new)
         self.kb_groups.append((exp_new, self.kb_new_box, -1))
+        self._kb_recompute_tokens()
+        if getattr(self, "kb_key_filter", None) or (
+                getattr(self, "kb_search", None) is not None
+                and (self.kb_search.get_text() or "").strip()):
+            self.filter_kb()
         self.update_kb_count()
 
     def build_kb_rows_from_scratch(self):
@@ -3488,6 +3881,8 @@ class App(Gtk.Application):
         if getattr(self, "kb_search", None) is None:
             return
         q = (self.kb_search.get_text() or "").strip().lower()
+        key_filter = getattr(self, "kb_key_filter", set())
+        filtering = bool(q or key_filter)
         shown = 0
         per_cat = {}
         self._kb_filtering = True
@@ -3496,12 +3891,16 @@ class App(Gtk.Application):
             matches = 0
             while child is not None:
                 nxt = child.get_next_sibling()
-                hit = (not q) or (q in getattr(child, "_search_text", ""))
+                combo_tokens = getattr(child, "_kb_combo_tokens", [])
+                token_match = any(
+                    all(t in combo for t in key_filter) for combo in combo_tokens)
+                hit = ((not q) or (q in getattr(child, "_search_text", ""))) and (
+                    not key_filter or token_match)
                 child.set_visible(hit)
                 matches += 1 if hit else 0
                 child = nxt
             exp.set_visible(matches > 0)
-            if q:
+            if filtering:
                 exp.set_expanded(matches > 0)
             else:
                 exp.set_expanded(False)
@@ -3510,7 +3909,7 @@ class App(Gtk.Application):
         self._kb_filtering = False
         for hdr, cat_box, ci in getattr(self, "kb_cats", []):
             hdr.set_visible(per_cat.get(ci, 0) > 0)
-        if q:
+        if filtering:
             self.kb_count.set_label(f"{shown} match" + ("" if shown == 1 else "es"))
         else:
             self.update_kb_count()
@@ -3695,9 +4094,14 @@ class App(Gtk.Application):
             clear_flow()
             combo_bits = []
             raw_combos = []
+            tokens = set()
+            combo_tokens = []
             for combo in group["combos"]:
                 raw_combo = combo["e_combo"].get_text().strip()
                 mods, key = self._kb_combo_parts(raw_combo)
+                one_combo_tokens = kb_bind_tokens(mods, key)
+                tokens |= one_combo_tokens
+                combo_tokens.append(one_combo_tokens)
                 combo_txt = friendly(mods, key)
                 combo_bits.append(combo_txt)
                 raw_combos.append(raw_combo)
@@ -3722,6 +4126,9 @@ class App(Gtk.Application):
             count.set_visible(len(group["combos"]) > 1)
             card._search_text = " ".join((
                 section, action_txt, args_txt, *combo_bits, *raw_combos)).lower()
+            card._kb_tokens = tokens
+            card._kb_combo_tokens = combo_tokens
+            self._kb_recompute_tokens()
 
         def remove_group(_b2=None):
             for combo in list(group["combos"]):
@@ -3736,6 +4143,7 @@ class App(Gtk.Application):
                 parent.remove(card)
             if group in getattr(self, "kb_cards", []):
                 self.kb_cards.remove(group)
+            self._kb_recompute_tokens()
             self.update_kb_count()
 
         def add_combo(raw=""):
@@ -3917,8 +4325,10 @@ class App(Gtk.Application):
                 touched[path] = read_lines(path)
             lines = touched[path]
             cur = get_simple(lines, key)
-            # Never invent settings that were not already in this file.
-            if cur is None:
+            # Never invent settings that were not already in this file, unless
+            # an experimental page explicitly opts in and the user changed the
+            # control from its initial value.
+            if cur is None and not c.get("add_missing", False):
                 continue
             if kind == "int":
                 try:
@@ -3957,6 +4367,8 @@ class App(Gtk.Application):
             else:
                 continue
             if new == cur:
+                continue
+            if cur is None and c.get("initial") == new:
                 continue
             touched[path] = set_simple(lines, key, new, sep=key_sep(lines, key))
         for path, lines in touched.items():
@@ -4200,8 +4612,8 @@ def parse_args(argv):
     ap.add_argument("--config-dir", metavar="DIR",
                     help="Mango config directory (default: ~/.config/mango)")
     ap.add_argument("--tab", metavar="ID",
-                    help="open a tab directly (layout, theme, colors, cursor, mouse, "
-                         "touchpad, keys, wallpaper, outputs, brightness, night, "
+                    help="open a tab directly (layout, theme, colors, cursor, keyboard, "
+                         "mouse, touchpad, keys, wallpaper, outputs, brightness, night, "
                          "apps, rules)")
     ap.add_argument("--no-reload", action="store_true",
                     help="write and validate, but do not reload Mango")

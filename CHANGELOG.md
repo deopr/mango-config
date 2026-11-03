@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — experimental
+
+- Keybinds now opens with a compact US-ANSI keyboard reference. Keys that
+  appear in a bind are tinted; click `Super` to filter the existing grouped
+  list to every Super shortcut, then click another key to narrow it to that
+  chord. Click the key again (or Clear) to remove the filter.
+- New **Keyboard** page under Input for `xkb_rules_layout`,
+  `xkb_rules_variant` and `xkb_rules_options`, with the active Mango layout
+  read through IPC. The layout setting is added only when it is missing and
+  the user actually changes the dropdown.
+
 ## 0.3.0 — 2026-11-01
 
 Brightness, default apps, and wallpaper fitting.
