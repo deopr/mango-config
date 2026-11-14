@@ -59,6 +59,8 @@ def run_one(profile_dir, label):
     before_hash = digest(profile_dir)
     before_counts = counts(profile_dir)
 
+    # Avoid colliding with a Mango Config window the user already has open.
+    mc.APP_ID = "io.github.deopr.MangoConfigTest"
     app = mc.App(profile=prof, tab="keys", no_reload=True)
     app.register(None)
     app.do_activate()

@@ -26,7 +26,7 @@ try:
 except (ImportError, ValueError):
     GdkPixbuf = None
 
-VERSION = "0.4.0"
+VERSION = "0.4.1"
 APP_ID = "io.github.deopr.MangoConfig"
 
 DEFAULT_CONFIG_DIR = os.path.abspath(os.path.expanduser(
@@ -1554,8 +1554,9 @@ def _mmsg_json(args, timeout=2.5):
 def _mmsg_dispatch(*args):
     if not shutil.which("mmsg"):
         return False, "mmsg not found"
+    payload = ",".join(str(arg) for arg in args)
     try:
-        out = subprocess.run(["mmsg", "dispatch"] + list(args),
+        out = subprocess.run(["mmsg", "dispatch", payload],
                              capture_output=True, text=True, timeout=4)
         text = (out.stdout or out.stderr or "").strip()
         if out.returncode != 0:

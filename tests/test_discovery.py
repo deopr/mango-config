@@ -79,7 +79,7 @@ with tempfile.TemporaryDirectory() as td:
     check("missing optional source: inline layout wins", r["layout"] == "config.conf", str(r))
 
 out = subprocess.run([sys.executable, APP, "--version"], capture_output=True, text=True)
-check("CLI version", out.returncode == 0 and out.stdout.strip() == "mango-config 0.4.0",
+check("CLI version", out.returncode == 0 and out.stdout.strip() == "mango-config 0.4.1",
       out.stdout + out.stderr)
 out = subprocess.run([sys.executable, APP, "--help"], capture_output=True, text=True)
 check("CLI help", out.returncode == 0 and "--config-dir" in out.stdout and "--tab" in out.stdout)
@@ -92,6 +92,27 @@ out = subprocess.run([sys.executable, APP, "--print-layout"],
                      capture_output=True, text=True)
 check("CLI print layout", out.returncode == 0 and len(out.stdout.strip()) > 0,
       out.stdout + out.stderr)
+
+with tempfile.TemporaryDirectory() as td:
+    log = os.path.join(td, "argv.log")
+    fake = os.path.join(td, "mmsg")
+    with open(fake, "w", encoding="utf-8") as fh:
+        fh.write(
+            "#!/usr/bin/env python3\n"
+            "import json, sys\n"
+            "open(%r, 'w', encoding='utf-8').write('\\n'.join(sys.argv[1:]))\n"
+            "print(json.dumps({'success': True}))\n" % log)
+    os.chmod(fake, 0o755)
+    old_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = td + ":" + old_path
+    try:
+        ok, message = mc._mmsg_dispatch("focusmon", "HDMI-A-1")
+        seen = open(log, encoding="utf-8").read().splitlines()
+    finally:
+        os.environ["PATH"] = old_path
+    check("mmsg dispatch comma-joins args",
+          ok and seen == ["dispatch", "focusmon,HDMI-A-1"],
+          message + " " + repr(seen))
 
 sample_bar = """// keep this comment
 {

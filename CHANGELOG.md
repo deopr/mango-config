@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.1 — 2026-11-14
+
+Tiling IPC fix for Mango 0.18.5.
+
+- `mmsg dispatch` now receives one comma-joined payload
+  (`focusmon,HDMI-A-1`, `setlayout,tile`) instead of separate argv entries.
+  This is the syntax required by current Mango and fixes the Tiling page's
+  “could not focus … unknown function” error.
+- Added a regression test that checks the exact argv passed to `mmsg`.
+
 ## 0.4.0 — 2026-11-14
 
 Bars, tiling presets, and a layout CLI.
