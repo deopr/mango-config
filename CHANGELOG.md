@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.2 — 2026-11-14
+
+Monitor-rule scale fix.
+
+- The monitor-rule editor now defaults **Scale** to `1.0` when the rule has
+  no scale. Previously it defaulted to `0` and GTK clamped the spin button to
+  its `0.01` minimum, so applying the page silently added `scale:0.01` to
+  every rule. That made the logical screen 100× too large and could take the
+  output down with it.
+- Applying monitor rules no longer adds a `scale` key unless one existed or
+  you actually changed the value.
+
 ## 0.4.1 — 2026-11-14
 
 Tiling IPC fix for Mango 0.18.5.

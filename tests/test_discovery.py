@@ -79,7 +79,7 @@ with tempfile.TemporaryDirectory() as td:
     check("missing optional source: inline layout wins", r["layout"] == "config.conf", str(r))
 
 out = subprocess.run([sys.executable, APP, "--version"], capture_output=True, text=True)
-check("CLI version", out.returncode == 0 and out.stdout.strip() == "mango-config 0.4.1",
+check("CLI version", out.returncode == 0 and out.stdout.strip() == "mango-config 0.4.2",
       out.stdout + out.stderr)
 out = subprocess.run([sys.executable, APP, "--help"], capture_output=True, text=True)
 check("CLI help", out.returncode == 0 and "--config-dir" in out.stdout and "--tab" in out.stdout)
@@ -113,6 +113,58 @@ with tempfile.TemporaryDirectory() as td:
     check("mmsg dispatch comma-joins args",
           ok and seen == ["dispatch", "focusmon,HDMI-A-1"],
           message + " " + repr(seen))
+
+class _SpinStub:
+    def __init__(self, value):
+        self.value = value
+
+    def get_value(self):
+        return self.value
+
+
+class _EntryStub:
+    def __init__(self, text):
+        self.text = text
+
+    def get_text(self):
+        return self.text
+
+
+class _DropdownStub:
+    def __init__(self, selected=0):
+        self.selected = selected
+
+    def get_selected(self):
+        return self.selected
+
+
+def _rule_stub(scale=1.0, present_scale=False):
+    keys = {"name", "width", "height", "refresh", "x", "y"}
+    if present_scale:
+        keys.add("scale")
+    return {
+        "name": _EntryStub("HDMI-A-1"),
+        "spins": {
+            "width": _SpinStub(1920), "height": _SpinStub(1080),
+            "refresh": _SpinStub(60.0), "x": _SpinStub(0),
+            "y": _SpinStub(0), "scale": _SpinStub(scale),
+        },
+        "rr": _DropdownStub(),
+        "sw": {},
+        "orig": "",
+        "extra": {},
+        "keys": keys,
+    }
+
+
+check("monitor rule scale defaults to 1.0",
+      mc._rule_number({}, "scale", 1.0) == 1.0
+      and mc._rule_number({"scale": "0.5"}, "scale", 1.0) == 0.5
+      and mc._rule_number({"scale": "bad"}, "scale", 1.0) == 1.0)
+line = mc.App._monitor_line(None, _rule_stub())
+check("monitor rule omits unset scale", "scale" not in line, line)
+line = mc.App._monitor_line(None, _rule_stub(scale=1.5, present_scale=True))
+check("monitor rule keeps explicit scale", "scale:1.5" in line, line)
 
 sample_bar = """// keep this comment
 {

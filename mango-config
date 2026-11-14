@@ -26,7 +26,7 @@ try:
 except (ImportError, ValueError):
     GdkPixbuf = None
 
-VERSION = "0.4.1"
+VERSION = "0.4.2"
 APP_ID = "io.github.deopr.MangoConfig"
 
 DEFAULT_CONFIG_DIR = os.path.abspath(os.path.expanduser(
@@ -2483,6 +2483,17 @@ def parse_kv(value):
     return d
 
 
+def _rule_number(kv, key, default=0.0):
+    """Numeric value for a rule field, or a sane default when it is absent."""
+    value = kv.get(key)
+    if value is None or str(value).strip() == "":
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def build_kv(d, order):
     return ",".join(f"{k}:{d.get(k, '')}" for k in order if k in d)
 
@@ -4603,10 +4614,11 @@ class App(Gtk.Application):
                  ("Refresh", "refresh", 0, 500, 0.01), ("X", "x", 0, 99999, 1),
                  ("Y", "y", 0, 99999, 1), ("Scale", "scale", 0.01, 10, 0.05)]
         for i, (label, key, lo, hi, step) in enumerate(specs):
-            try:
-                val = float(kv.get(key, 0) or 0)
-            except ValueError:
-                val = 0.0
+            # Scale defaults to 1.0. Defaulting it to 0 clamps the spin
+            # button to its 0.01 minimum and silently writes scale:0.01,
+            # which makes the logical screen 100x too large.
+            default = 1.0 if key == "scale" else 0.0
+            val = _rule_number(kv, key, default)
             sp = self._spin(val, lo, hi, step)
             spins[key] = sp
             lab = Gtk.Label(label=label)
