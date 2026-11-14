@@ -79,13 +79,114 @@ with tempfile.TemporaryDirectory() as td:
     check("missing optional source: inline layout wins", r["layout"] == "config.conf", str(r))
 
 out = subprocess.run([sys.executable, APP, "--version"], capture_output=True, text=True)
-check("CLI version", out.returncode == 0 and out.stdout.strip() == "mango-config 0.3.0",
+check("CLI version", out.returncode == 0 and out.stdout.strip() == "mango-config 0.4.0",
       out.stdout + out.stderr)
 out = subprocess.run([sys.executable, APP, "--help"], capture_output=True, text=True)
 check("CLI help", out.returncode == 0 and "--config-dir" in out.stdout and "--tab" in out.stdout)
 check("CLI help lists new tabs",
-      all(t in out.stdout for t in ("wallpaper", "night", "brightness", "apps", "keyboard")),
+      all(t in out.stdout for t in ("wallpaper", "night", "brightness", "apps",
+                                    "keyboard", "bar", "tiling",
+                                    "--print-layout")),
       out.stdout)
+out = subprocess.run([sys.executable, APP, "--print-layout"],
+                     capture_output=True, text=True)
+check("CLI print layout", out.returncode == 0 and len(out.stdout.strip()) > 0,
+      out.stdout + out.stderr)
+
+sample_bar = """// keep this comment
+{
+    "height": 34, // root height
+    "modules": {
+        "height": 99,
+        "layer": "overlay"
+    },
+    "layer": "top",
+}
+"""
+updated_bar = mc._set_jsonc_top_level(
+    sample_bar, {"height": 44, "layer": "bottom"})
+bar_data = mc._parse_jsonc(updated_bar, {})
+check("JSONC update keeps comments", "keep this comment" in updated_bar)
+check("JSONC update changes root keys",
+      bar_data.get("height") == 44 and bar_data.get("layer") == "bottom",
+      str(bar_data))
+check("JSONC update leaves nested keys",
+      bar_data.get("modules", {}).get("height") == 99 and
+      bar_data.get("modules", {}).get("layer") == "overlay", str(bar_data))
+
+tiling_text = mc._tiling_text_with_rules(
+    "source=./layout.conf\n\n# personal tail\n",
+    {"HDMI-A-1": "tile", "DP-1": "fair"})
+check("tiling block writes wildcard rules",
+      "id:*, monitor_name:HDMI-A-1, layout_name:tile" in tiling_text and
+      "id:*, monitor_name:DP-1, layout_name:fair" in tiling_text, tiling_text)
+check("tiling block preserves surrounding config",
+      "source=./layout.conf" in tiling_text and "# personal tail" in tiling_text)
+check("tiling block reads back",
+      mc._tiling_rules_from_text(tiling_text) ==
+      {"HDMI-A-1": "tile", "DP-1": "fair"})
+removed = mc._tiling_text_with_rules(tiling_text, {"HDMI-A-1": "tile"})
+check("tiling block removal is surgical",
+      "DP-1" not in removed and "HDMI-A-1" in removed and
+      "personal tail" in removed, removed)
+
+with tempfile.TemporaryDirectory() as td:
+    old_home = os.environ.get("XDG_CONFIG_HOME")
+    old_mangobar = os.environ.pop("MANGOBAR_CONFIG", None)
+    os.environ["XDG_CONFIG_HOME"] = td
+    try:
+        cfg_dir = os.path.join(td, "waybar")
+        os.makedirs(cfg_dir)
+        cfg = os.path.join(cfg_dir, "config.jsonc")
+        open(cfg, "w", encoding="utf-8").write(sample_bar)
+        ok, message = mc._bar_quick_save(
+            "waybar", {"height": 40, "layer": "bottom", "position": "bottom"})
+        saved = mc._parse_jsonc(open(cfg, encoding="utf-8").read(), {})
+        check("bar quick save writes root options",
+              ok and saved.get("height") == 40 and
+              saved.get("layer") == "bottom" and
+              saved.get("position") == "bottom", message + " " + str(saved))
+        check("bar quick save keeps nested modules",
+              saved.get("modules", {}).get("height") == 99, str(saved))
+        backups = os.listdir(os.path.join(cfg_dir, ".autobak"))
+        check("bar quick save backs up", len(backups) == 1, str(backups))
+
+        style_path = os.path.join(cfg_dir, "style.css")
+        open(style_path, "w", encoding="utf-8").write("/* old style */\n")
+        preset = next(p for p in mc.BAR_PRESETS
+                      if p["id"] == "waybar-catppuccin")
+        ok, message = mc._bar_apply_preset(preset)
+        preset_cfg = mc._read_jsonc(cfg, {})
+        style = open(style_path, encoding="utf-8").read()
+        check("bar preset writes config",
+              ok and "custom/layout" in preset_cfg.get("modules-left", []),
+              message)
+        check("bar preset writes palette",
+              ok and "#89b4fa" in style and "#1e1e2e" in style)
+        check("bar preset backups both files",
+              len(os.listdir(os.path.join(cfg_dir, ".autobak"))) >= 2)
+    finally:
+        if old_home is None:
+            os.environ.pop("XDG_CONFIG_HOME", None)
+        else:
+            os.environ["XDG_CONFIG_HOME"] = old_home
+        if old_mangobar is not None:
+            os.environ["MANGOBAR_CONFIG"] = old_mangobar
+
+with tempfile.TemporaryDirectory() as td:
+    cfg = os.path.join(td, "config.conf")
+    open(cfg, "w", encoding="utf-8").write("source=./layout.conf\n")
+    ok, message = mc._tiling_save_default("HDMI-A-1", "tile", path=cfg)
+    text = open(cfg, encoding="utf-8").read()
+    check("tiling default save", ok and "layout_name:tile" in text, message)
+    ok, message = mc._tiling_save_default("HDMI-A-1", None, path=cfg)
+    text = open(cfg, encoding="utf-8").read()
+    check("tiling default remove",
+          ok and "mango-config tiling defaults" not in text, message)
+    ok, message = mc._tiling_save_default("bad,name", "tile", path=cfg)
+    check("tiling default rejects bad monitor", not ok, message)
+    ok, message = mc._tiling_save_default("HDMI-A-1", "nope", path=cfg)
+    check("tiling default rejects bad layout", not ok, message)
 
 with tempfile.TemporaryDirectory() as td:
     for name in ("b.png", "a.JPG", "notes.txt", "sub.png"):

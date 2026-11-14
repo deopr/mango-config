@@ -80,6 +80,14 @@ def run_one(profile_dir, label):
     assert hasattr(app, "apps_apply"), "%s: default apps save button missing" % label
     assert hasattr(app, "kb_key_buttons") and hasattr(app, "keyboard_layout"), (
         "%s: keyboard map / layout page missing" % label)
+    assert hasattr(app, "bar_stack") and hasattr(app, "bar_quick"), (
+        "%s: bar page missing" % label)
+    assert set(app.bar_quick) == {"mangobar", "waybar"}, (
+        "%s: bar engine settings missing" % label)
+    assert hasattr(app, "tiling_target_dd") and hasattr(app, "tiling_layout_buttons"), (
+        "%s: tiling page missing" % label)
+    assert len(app.tiling_layout_buttons) == len(mc.LAYOUT_INFO), (
+        "%s: tiling layout cards missing" % label)
 
     super_buttons = app.kb_key_buttons.get("super", [])
     if super_buttons:

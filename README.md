@@ -25,6 +25,20 @@ touch. Every Apply is validated and backed up.
 
 ## Features
 
+- **Bar** — manage mangobar and Waybar from one page. Both get a live
+  running/stopped card, quick top-level settings (height, layer, position and
+  margins), start/stop/restart buttons, and credited presets. Presets replace
+  the bar's `config.jsonc`/`style.css` only after confirmation and keep a
+  timestamped copy in `.autobak`. Waybar presets use `ext/workspaces` plus a
+  `custom/layout` module backed by `mango-config --print-layout`, so no
+  Hyprland-only modules are required.
+- **Tiling** — a live view of every monitor's current layout and per-tag
+  symbols, plus layout cards grouped by family. Selecting a card runs
+  `focusmon`/`setlayout` through `mmsg`, so it affects only that monitor's
+  current tag. A separate “Default after reload” control writes a managed
+  `tag_rule = id:*, monitor_name:…, layout_name:…` block at the end of
+  `config.conf`; the block is rewritten by the Tiling page and leaves all other
+  rules alone.
 - **Layout & gaps** — border radius, border width, inner/outer gaps.
 - **Theme colors** — the extended palette from your theme, grouped into
   surfaces, accents, jump labels and group bar.
@@ -68,9 +82,11 @@ touch. Every Apply is validated and backed up.
 - **Display guard** — after an output change, an inline 10-second countdown
   asks you to keep or revert. If the timer runs out, it reverts automatically.
 
-Wallpaper, Brightness and Night light are separate from the global Apply flow.
-Wallpaper and Default apps write their own state outside the Mango config;
-Brightness and Night light are session-only.
+Bar settings and Tiling are separate from the global Apply flow. The Bar page
+writes the selected bar's own config and style; the Tiling page applies layouts
+through Mango IPC immediately and writes persistent defaults to its managed
+block in `config.conf`. Wallpaper and Default apps write their own state
+outside the Mango config; Brightness and Night light are session-only.
 
 ## Requirements
 
@@ -86,6 +102,10 @@ Optional, for the extra pages:
 - `fuzzel` — text-only Wallpaper quick pick.
 - `light-brightness`, `brightnessctl` or `light` — Brightness page. A writable
   `/sys/class/backlight` device also works without an extra tool.
+- `mangobar` and/or `waybar` — Bar page. Either bar works independently; the
+  page detects installed executables and user services.
+- `mmsg` — Tiling page and the Waybar `custom/layout` module. It ships with
+  Mango and uses the running compositor's IPC socket.
 - GdkPixbuf, normally installed with GTK, is used for wallpaper fitting.
 
 Install the toolkit on your distro:
@@ -184,19 +204,26 @@ Output changes additionally show the inline keep/revert guard.
 
 ```bash
 mango-config                      # normal launch
+mango-config --tab bar            # mangobar + Waybar status and presets
+mango-config --tab tiling         # live layout + layout presets
 mango-config --tab keys           # keybind list with the keyboard map
 mango-config --tab keyboard       # XKB layout, variant and options
 mango-config --tab wallpaper      # names + fit options + live preview
 mango-config --tab brightness     # screen brightness slider
 mango-config --tab apps           # default terminal/file manager/browser
 mango-config --tab night          # gammastep night light controls
+mango-config --print-layout       # print the focused layout symbol (for Waybar)
 mango-config --config-dir ~/dotfiles/mango
 mango-config --no-reload          # write and validate only
 mango-config --version
 ```
 
-Tab IDs: `layout`, `theme`, `colors`, `cursor`, `wallpaper`, `keyboard`,
-`mouse`, `touchpad`, `keys`, `outputs`, `brightness`, `night`, `apps`, `rules`.
+Tab IDs: `bar`, `tiling`, `layout`, `theme`, `colors`, `cursor`, `wallpaper`,
+`keyboard`, `mouse`, `touchpad`, `keys`, `outputs`, `brightness`, `night`,
+`apps`, `rules`.
+
+`--print-layout` is intentionally tiny: it prints one symbol such as `T` or
+`DW` and exits. The Waybar `custom/layout` preset runs it every two seconds.
 
 ## Inspiration
 

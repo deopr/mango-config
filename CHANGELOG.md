@@ -1,6 +1,35 @@
 # Changelog
 
-## Unreleased — experimental
+## 0.4.0 — 2026-11-14
+
+Bars, tiling presets, and a layout CLI.
+
+- New **Bar** page under Desktop for both mangobar and Waybar. Each bar gets a
+  live running/stopped card with start, stop and restart buttons, quick
+  top-level settings (height, layer, position, margins), current module
+  summary, and confirmed presets. Presets keep a timestamped copy in
+  `.autobak` before replacing `config.jsonc` and `style.css`.
+- Five mangobar and four Waybar presets, including Catppuccin Mocha, Rosé Pine
+  Moon and Tokyo Night palettes. Credited sources are linked on each card.
+  Waybar presets use `ext/workspaces` and a `custom/layout` module instead of
+  Hyprland-only modules.
+- New **Tiling** page under Desktop with live per-monitor layout symbols, tag
+  badges, family-grouped layout cards, and a filter. Clicking a card focuses
+  the selected monitor with `mmsg dispatch focusmon` and applies
+  `setlayout` to its current tag.
+- Tiling defaults can be saved per monitor. The page maintains a clearly
+  marked `tag_rule = id:*, monitor_name:…, layout_name:…` block at the end of
+  `config.conf`, preserving all other rules and comments.
+- New `mango-config --print-layout` prints the focused monitor's layout
+  symbol for Waybar's `custom/layout` module.
+- The global Apply footer now hides on the Bar and Tiling pages, since those
+  pages write their own files or apply through IPC immediately.
+- Reader tests now cover nested JSONC updates, preset writes and backups, the
+  managed tiling block, CLI version and `--print-layout`.
+
+## 0.3.1 — 2026-11-03
+
+Keyboard map and XKB layout page.
 
 - Keybinds now opens with a compact US-ANSI keyboard reference. Keys that
   appear in a bind are tinted; click `Super` to filter the existing grouped

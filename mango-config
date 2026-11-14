@@ -26,7 +26,7 @@ try:
 except (ImportError, ValueError):
     GdkPixbuf = None
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 APP_ID = "io.github.deopr.MangoConfig"
 
 DEFAULT_CONFIG_DIR = os.path.abspath(os.path.expanduser(
@@ -73,6 +73,596 @@ DEFAULT_APP_ROLES = (
     ("browser", "Web browser", ("x-scheme-handler/http", "x-scheme-handler/https",
                                 "text/html", "application/xhtml+xml"), "browser"),
 )
+
+# ---------------------------------------------------------------------------
+# Bar presets
+#
+# Palettes are credited in the UI. The layouts and CSS are written for Mango's
+# module names, not copied wholesale from another compositor's dotfiles.
+# ---------------------------------------------------------------------------
+MANGOBAR_PALETTES = {
+    "default": {
+        "bg": "#1d2021", "fg": "#ebdbb2", "muted": "#928374", "dim": "#a89984",
+        "accent": "#83a598", "accent2": "#d3869b", "surface": "#32302f",
+        "surface_hi": "#3c3836", "on_accent": "#1d2021",
+    },
+    "midnight": {
+        "bg": "#141f30", "fg": "#c4c7cb", "muted": "#636c7a", "dim": "#868c95",
+        "accent": "#79A7BE", "accent2": "#5C81A8", "surface": "#263040",
+        "surface_hi": "#343d4c", "on_accent": "#141f30",
+    },
+    "catppuccin": {
+        "bg": "#1e1e2e", "fg": "#cdd6f4", "muted": "#6c7086", "dim": "#a6adc8",
+        "accent": "#89b4fa", "accent2": "#cba6f7", "surface": "#313244",
+        "surface_hi": "#45475a", "on_accent": "#11111b",
+    },
+    "rosepine": {
+        "bg": "#232136", "fg": "#e0def4", "muted": "#6e6a86", "dim": "#908caa",
+        "accent": "#c4a7e7", "accent2": "#eb6f92", "surface": "#2a273f",
+        "surface_hi": "#393552", "on_accent": "#232136",
+    },
+    "tokyonight": {
+        "bg": "#1a1b26", "fg": "#c0caf5", "muted": "#565f89", "dim": "#9aa5ce",
+        "accent": "#7aa2f7", "accent2": "#bb9af7", "surface": "#24283b",
+        "surface_hi": "#414868", "on_accent": "#1a1b26",
+    },
+}
+
+WAYBAR_PALETTES = {
+    "midnight": {
+        "base": "#141f30", "surface": "#263040", "overlay": "#343d4c",
+        "muted": "#636c7a", "subtle": "#868c95", "text": "#c4c7cb",
+        "accent": "#79A7BE", "accent2": "#5C81A8", "green": "#8fbcbb",
+        "peach": "#d08770", "red": "#bf616a", "on_accent": "#141f30",
+    },
+    "catppuccin": {
+        "base": "#1e1e2e", "surface": "#313244", "overlay": "#45475a",
+        "muted": "#6c7086", "subtle": "#a6adc8", "text": "#cdd6f4",
+        "accent": "#89b4fa", "accent2": "#cba6f7", "green": "#a6e3a1",
+        "peach": "#fab387", "red": "#f38ba8", "on_accent": "#11111b",
+    },
+    "rosepine": {
+        "base": "#232136", "surface": "#2a273f", "overlay": "#393552",
+        "muted": "#6e6a86", "subtle": "#908caa", "text": "#e0def4",
+        "accent": "#c4a7e7", "accent2": "#eb6f92", "green": "#9ccfd8",
+        "peach": "#f6c177", "red": "#eb6f92", "on_accent": "#232136",
+    },
+    "tokyonight": {
+        "base": "#1a1b26", "surface": "#24283b", "overlay": "#414868",
+        "muted": "#565f89", "subtle": "#9aa5ce", "text": "#c0caf5",
+        "accent": "#7aa2f7", "accent2": "#bb9af7", "green": "#9ece6a",
+        "peach": "#ff9e64", "red": "#f7768e", "on_accent": "#1a1b26",
+    },
+}
+
+MANGOBAR_BASE_CONFIG = {
+    "layer": "top",
+    "height": 34,
+    "buffer-scale": 1,
+    "sys-interval": 2,
+    "modules-left": ["workspaces", "layout", "window"],
+    "modules-center": [],
+    "modules-right": [
+        "hideclients", "tray", "network", "cpu", "memory", "pulseaudio",
+        "custom/brightness", "battery", "clock#date", "clock#time",
+        "custom/power",
+    ],
+    "workspaces": {
+        "hide-empty": True,
+        "overview-label": "OVERVIEW",
+        "on-click": "activate",
+        "on-click-right": "toggle",
+    },
+    "layout": {"format": "{}"},
+    "window": {"format": "{}"},
+    "network": {
+        "format": "{icon} {ifname}",
+        "format-wifi": "{signal} {ssid}",
+        "format-disconnected": "{icon}",
+        "icon-wifi": "󰖩",
+        "icon-ethernet": "󰈀",
+        "icon-disconnected": "󰖪",
+        "signal-icons": ["󰤯", "󰤟", "󰤢", "󰤥", "󰤨"],
+        "format-alt": "↓{down} ↑{up}",
+    },
+    "hideclients": {"format": " {}"},
+    "cpu": {"format": " {load}%"},
+    "memory": {"format": " {}%"},
+    "pulseaudio": {
+        "format": "{icon} {volume}% {bt}",
+        "format-muted": "󰝟 {volume}% {bt}",
+        "icons": ["󰝟", "󰕿", "󰕾"],
+        "scroll-step": 5,
+        "max-volume": 150,
+    },
+    "custom/brightness": {
+        "exec": "$HOME/.local/bin/mangobar-brightness status",
+        "interval": 2,
+        "signal": 8,
+        "format": "{}",
+        "on-click": "$HOME/.local/bin/mangobar-brightness show",
+        "on-scroll-up": "$HOME/.local/bin/mangobar-brightness up",
+        "on-scroll-down": "$HOME/.local/bin/mangobar-brightness down",
+    },
+    "battery": {
+        "format": "{icon} {percent}% {ac}",
+        "icons": ["󰂎", "󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀",
+                  "󰂁", "󰂂", "󰁹"],
+    },
+    "clock#date": {"format": " {:L%b%d·%A}"},
+    "clock#time": {"format": " {:L%H:%M}"},
+    "tray": {"icon-size": 25, "spacing": 10},
+    "custom/power": {
+        "format": "",
+        "on-click": "$HOME/.local/bin/mangobar-power-menu",
+        "on-click-right": "sleep 0.1s && swaync-client -t -sw",
+    },
+}
+
+WAYBAR_BASE_CONFIG = {
+    "layer": "top",
+    "position": "top",
+    "mode": "dock",
+    "height": 36,
+    "margin-top": 6,
+    "margin-left": 200,
+    "margin-right": 200,
+    "reload_style_on_change": True,
+    "modules-left": ["custom/launcher", "ext/workspaces", "custom/layout"],
+    "modules-center": ["clock"],
+    "modules-right": [
+        "mpris", "tray", "cpu", "memory", "pulseaudio", "network",
+        "custom/brightness", "custom/power",
+    ],
+    "ext/workspaces": {
+        "format": "{icon}",
+        "disable-scroll": True,
+        "all-outputs": True,
+        "ignore-hidden": False,
+        "sort-by-id": True,
+        "on-click": "activate",
+        "format-icons": {
+            "active": "󰮯", "default": "󰊠", "urgent": "󱙝",
+        },
+    },
+    "custom/launcher": {
+        "format": "\uf002",
+        "on-click": "anyrun",
+        "tooltip-format": "Applications (Super+Space)",
+    },
+    "custom/layout": {
+        "exec": "$HOME/.local/bin/mango-config --print-layout",
+        "interval": 2,
+        "format": "󰕰 {}",
+        "tooltip-format": "Mango layout: {}",
+    },
+    "clock": {
+        "format": "{:%a %H:%M}",
+        "interval": 60,
+        "tooltip-format": "<span>{calendar}</span>",
+        "calendar": {
+            "mode": "month",
+            "mode-mon-col": 2,
+            "format": {
+                "month": "<span color='#f6c177'><b>{}</b></span>",
+                "weekdays": "<span color='#c4a7e7'><b>{}</b></span>",
+                "today": "<span color='#eb6f92'><b>{}</b></span>",
+            },
+        },
+    },
+    "mpris": {
+        "format": "{status_icon} {dynamic}",
+        "format-paused": " {status_icon} {dynamic}",
+        "format-disabled": "",
+        "interval": 5,
+        "dynamic-order": ["artist", "position", "length"],
+        "dynamic-importance-order": ["position", "length", "artist"],
+        "dynamic-len": 40,
+        "tooltip-format": "{player} ({status}):\n{artist} - {title}",
+        "status-icons": {
+            "playing": "\uf04b", "paused": "\uf04c", "stopped": "\uf04d",
+        },
+        "on-click": "playerctl play-pause",
+        "on-click-right": "playerctl next",
+        "on-scroll-up": "playerctl volume 0.05+",
+        "on-scroll-down": "playerctl volume 0.05-",
+    },
+    "tray": {"icon-size": 14, "spacing": 6},
+    "cpu": {
+        "format": "\uf0e4 {usage:02}%",
+        "tooltip-format": "CPU: {usage}% (click for btop)",
+        "on-click": "kitty -e btop",
+    },
+    "memory": {
+        "format": "\uf2db {used:0.1f}G",
+        "tooltip-format": "Used/Total\n{used:0.1f} GiB / {total:0.1f} GiB ({percentage}%)",
+        "on-click": "kitty -e btop",
+    },
+    "pulseaudio": {
+        "format": "{icon} {volume}%",
+        "format-muted": "\uf028 {icon}",
+        "format-icons": {
+            "headphone": "\uf025",
+            "default": ["\uf026", "\uf027", "\uf028"],
+        },
+        "icon-monospace": False,
+        "tooltip-format": "Volume: {volume}% (scroll to change, right-click mute)",
+        "on-click": "pavucontrol",
+        "on-click-right": "pactl set-sink-mute @DEFAULT_SINK@ toggle",
+        "on-scroll-up": "swayosd-client --output-volume +2",
+        "on-scroll-down": "swayosd-client --output-volume -2",
+    },
+    "network": {
+        "format": "\uf6ff",
+        "format-wifi": "{icon} {essid}",
+        "format-ethernet": "{icon}",
+        "format-disconnected": "",
+        "format-icons": {
+            "wifi": "\uf1eb", "ethernet": "\uf6ff", "disconnected": "\uf127",
+        },
+        "tooltip-format-wifi": "{essid} ({frequency} GHz)\n{ipaddr}\n⇣{bandwidthDownBytes}  ⇡{bandwidthUpBytes}",
+        "tooltip-format-ethernet": "{ipaddr}\n⇣{bandwidthDownBytes}  ⇡{bandwidthUpBytes}",
+        "tooltip-format-disconnected": "Disconnected",
+        "max-length": 28,
+        "interval": 5,
+        "on-click": "kitty -e nmtui",
+    },
+    "custom/brightness": {
+        "exec": "$HOME/.local/bin/mangobar-brightness status",
+        "format": "\u2600 {}",
+        "interval": 2,
+        "tooltip": False,
+        "on-click": "$HOME/.local/bin/mangobar-brightness show",
+        "on-scroll-up": "$HOME/.local/bin/mangobar-brightness up",
+        "on-scroll-down": "$HOME/.local/bin/mangobar-brightness down",
+    },
+    "custom/power": {
+        "format": "\uf011",
+        "on-click": "$HOME/.local/bin/mangobar-power-menu",
+        "tooltip-format": "Power menu (Super+X)",
+    },
+}
+
+LAYOUT_INFO = [
+    ("tile", "T", "Master & stack",
+     "Classic master area on the left, remaining windows stacked on the right."),
+    ("center_tile", "CT", "Master & stack",
+     "Master area centered, with the stack split evenly around it."),
+    ("right_tile", "RT", "Master & stack",
+     "Master area on the right, stack on the left."),
+    ("deck", "K", "Master & stack",
+     "Master stays visible while the stack behaves like a deck of cards."),
+    ("monocle", "M", "Master & stack",
+     "One window fills the tag; the rest sit behind it as a stack."),
+    ("grid", "G", "Master & stack",
+     "Even grid of windows, useful when no window deserves a master area."),
+    ("scroller", "S", "Scrolling",
+     "Horizontal PaperWM-style strip of windows that scrolls as you focus."),
+    ("vertical_scroller", "VS", "Scrolling",
+     "Vertical scrollable strip for tall monitors or reading workflows."),
+    ("vertical_tile", "VT", "Vertical",
+     "Master on top and a vertical stack below it."),
+    ("vertical_grid", "VG", "Vertical",
+     "Even grid arranged for portrait or vertical-first layouts."),
+    ("vertical_deck", "VK", "Vertical",
+     "Vertical master with the remaining windows stacked as a deck."),
+    ("dwindle", "DW", "Dynamic",
+     "Binary tree of recursive splits; each new window splits the focused one."),
+    ("fair", "F", "Dynamic",
+     "Keeps window areas proportional while new windows appear."),
+    ("vertical_fair", "VF", "Dynamic",
+     "Fair layout with vertical-first split direction."),
+]
+LAYOUT_BY_NAME = {name: (symbol, family, desc)
+                  for name, symbol, family, desc in LAYOUT_INFO}
+LAYOUT_SYMBOL_NAME = {symbol: name for name, symbol, _f, _d in LAYOUT_INFO}
+LAYOUT_FAMILIES = ("Master & stack", "Scrolling", "Vertical", "Dynamic")
+TILING_BEGIN = "# BEGIN mango-config tiling defaults (managed block)"
+TILING_END = "# END mango-config tiling defaults"
+
+
+def _mangobar_css(palette, font_size=13):
+    """Render a mangobar stylesheet from a small, credited palette."""
+    return """/* mangobar preset — generated by Mango Config.
+ * Only properties supported by mangobar are used. Palette credit is in the
+ * Mango Config Bar page; edit this file freely after applying.
+ */
+@define-color bg         %(bg)s;
+@define-color fg         %(fg)s;
+@define-color muted      %(muted)s;
+@define-color dim        %(dim)s;
+@define-color accent     %(accent)s;
+@define-color accent2    %(accent2)s;
+@define-color surface    %(surface)s;
+@define-color surface_hi %(surface_hi)s;
+@define-color on_accent  %(on_accent)s;
+
+* {
+    font-family: "JetBrainsMono Nerd Font";
+    font-size: %(font_size)dpx;
+    font-weight: bold;
+    color: @fg;
+    background: none;
+    padding: 0px 12px;
+    margin: 4px 2px;
+    border-radius: 11px;
+}
+
+#bar { background: none; margin: 8px 10px; }
+#bar.sel { background: none; }
+
+#tags, #workspaces { background: none; padding: 0px; }
+#tags.active, #workspaces button.active {
+    background-color: @accent;
+    color: @on_accent;
+}
+#tags.occupied, #workspaces button.occupied {
+    background-color: @surface_hi;
+    color: @fg;
+}
+#tags.urgent, #workspaces button.urgent {
+    background-color: @accent2;
+    color: @on_accent;
+}
+#tags.empty, #tags.inactive, #workspaces button {
+    background: none;
+    color: @dim;
+}
+#tags:hover, #workspaces button:hover {
+    background-color: @surface_hi;
+    color: @fg;
+}
+
+#layout {
+    background-color: @surface_hi;
+    color: @accent;
+    padding: 0px 9px;
+}
+#title { background-color: @surface; color: @fg; }
+
+#cpu, #mem, #hideclients { background-color: @surface; color: @fg; }
+#mem { color: @accent; }
+#volume, #brightness, #custom-brightness {
+    background-color: @surface;
+    color: @fg;
+}
+#brightness, #custom-brightness { color: @accent; }
+#custom-brightness:hover { background-color: @surface_hi; }
+
+#network { background-color: @surface_hi; color: @fg; }
+#network.connected { background-color: @surface_hi; color: @fg; }
+#network.ethernet { color: @accent; }
+#network.wifi { color: @accent2; }
+#network.disconnected { background: none; color: @muted; }
+
+#battery { background-color: @surface; color: @fg; }
+#keyboardlayout, #keymode { background-color: @surface; color: @accent; }
+
+#clock { background-color: @surface; color: @fg; }
+#clock.date { background-color: @surface; color: @muted; padding: 0px 8px; }
+#clock.time { background-color: @surface; color: @fg; }
+
+#tray { background: none; padding: 0px 6px; margin: 2px 2px; }
+#custom-power {
+    background-color: @surface_hi;
+    color: @accent;
+    font-size: 17px;
+    padding: 0px 12px;
+}
+#custom-power:hover { background-color: @accent; color: @on_accent; }
+#separator { background: none; color: @dim; padding: 0px 4px; }
+#overview { background-color: @accent; color: @on_accent; }
+""" % dict(palette, font_size=font_size)
+
+
+def _waybar_css(palette):
+    """Render a Waybar stylesheet from the same credited palettes."""
+    return """/* Waybar preset — generated by Mango Config.
+ * Palette credit is in the Mango Config Bar page. Modules are Mango-safe:
+ * ext/workspaces + a mmsg-backed custom/layout module.
+ */
+@define-color base       %(base)s;
+@define-color surface    %(surface)s;
+@define-color overlay    %(overlay)s;
+@define-color muted      %(muted)s;
+@define-color subtle     %(subtle)s;
+@define-color text       %(text)s;
+@define-color accent     %(accent)s;
+@define-color accent2    %(accent2)s;
+@define-color green      %(green)s;
+@define-color peach      %(peach)s;
+@define-color red        %(red)s;
+@define-color on_accent  %(on_accent)s;
+
+* {
+    font-family: "JetBrainsMono Nerd Font";
+    font-size: 12px;
+    font-weight: 600;
+    transition: color 140ms ease-out, background-color 140ms ease-out;
+}
+window#waybar { background-color: transparent; }
+
+#workspaces,
+#clock,
+#mpris,
+#tray,
+#memory,
+#cpu,
+#pulseaudio,
+#network,
+#custom-launcher,
+#custom-layout,
+#custom-brightness,
+#custom-power {
+    background-color: alpha(@base, 0.92);
+    border: 1px solid alpha(@overlay, 0.65);
+    border-radius: 13px;
+    padding: 2px 11px;
+    margin: 3px 4px 4px 4px;
+}
+#workspaces:hover,
+#clock:hover,
+#mpris:hover,
+#tray:hover,
+#memory:hover,
+#cpu:hover,
+#pulseaudio:hover,
+#network:hover,
+#custom-launcher:hover,
+#custom-layout:hover,
+#custom-brightness:hover,
+#custom-power:hover {
+    border: 1px solid alpha(@accent, 0.65);
+}
+
+#workspaces {
+    font-size: 14px;
+    padding: 2px 8px;
+}
+#workspaces button {
+    color: @subtle;
+    padding: 0 5px;
+    margin: 0;
+    border-radius: 9px;
+}
+#workspaces button.active { color: @accent; }
+#workspaces button.empty { color: @muted; }
+#workspaces button.empty.active { color: @muted; }
+#workspaces button.urgent { color: @red; }
+#workspaces button:hover { color: @text; }
+
+#custom-launcher { color: @peach; font-size: 14px; }
+#custom-layout { color: @accent2; }
+#custom-power { color: @red; font-size: 14px; }
+#custom-power:hover {
+    color: @red;
+    border: 1px solid alpha(@red, 0.6);
+}
+#custom-brightness { color: @peach; font-size: 14px; }
+#clock { color: @accent; }
+#mpris { color: @green; }
+#memory { color: @accent2; }
+#cpu { color: @subtle; }
+#pulseaudio { color: @peach; }
+#network { color: @green; }
+#tray { color: @text; }
+
+#pulseaudio.muted,
+#network.disconnected {
+    color: @muted;
+}
+
+tooltip {
+    background-color: alpha(@base, 0.97);
+    border: 1px solid alpha(@accent, 0.45);
+    border-radius: 10px;
+    padding: 6px 10px;
+}
+tooltip label { color: @text; }
+""" % palette
+
+
+BAR_PRESETS = [
+    {
+        "id": "mangobar-default",
+        "engine": "mangobar",
+        "name": "Mango Default",
+        "description": "The upstream mangobar module set: tags, layout, title, "
+                       "tray, network, CPU, memory, volume, battery and clocks.",
+        "source": "Palette inspired by mangowm/mangobar's example",
+        "source_url": "https://github.com/mangowm/mangobar",
+        "config": MANGOBAR_BASE_CONFIG,
+        "css": _mangobar_css(MANGOBAR_PALETTES["default"]),
+    },
+    {
+        "id": "mangobar-midnight",
+        "engine": "mangobar",
+        "name": "Midnight Pills",
+        "description": "A calm blue pill bar: each module is a rounded card on "
+                       "a transparent strip.",
+        "source": "Local wallpaper palette",
+        "source_url": "https://github.com/mangowm/mangobar",
+        "config": MANGOBAR_BASE_CONFIG,
+        "css": _mangobar_css(MANGOBAR_PALETTES["midnight"]),
+    },
+    {
+        "id": "mangobar-catppuccin",
+        "engine": "mangobar",
+        "name": "Catppuccin Mocha",
+        "description": "Soft pastel Mocha palette with blue active tags and "
+                       "mauve layout/window accents.",
+        "source": "Palette: catppuccin/waybar",
+        "source_url": "https://github.com/catppuccin/waybar",
+        "config": MANGOBAR_BASE_CONFIG,
+        "css": _mangobar_css(MANGOBAR_PALETTES["catppuccin"]),
+    },
+    {
+        "id": "mangobar-rosepine",
+        "engine": "mangobar",
+        "name": "Rosé Pine Moon",
+        "description": "Muted rose, iris and foam tones from the Rosé Pine "
+                       "Moon palette.",
+        "source": "Palette: rose-pine/waybar",
+        "source_url": "https://github.com/rose-pine/waybar",
+        "config": MANGOBAR_BASE_CONFIG,
+        "css": _mangobar_css(MANGOBAR_PALETTES["rosepine"]),
+    },
+    {
+        "id": "mangobar-tokyonight",
+        "engine": "mangobar",
+        "name": "Tokyo Night",
+        "description": "Deep navy cards with neon blue and violet accents.",
+        "source": "Palette: folke/tokyonight.nvim",
+        "source_url": "https://github.com/folke/tokyonight.nvim",
+        "config": MANGOBAR_BASE_CONFIG,
+        "css": _mangobar_css(MANGOBAR_PALETTES["tokyonight"]),
+    },
+    {
+        "id": "waybar-midnight",
+        "engine": "waybar",
+        "name": "Mango Midnight",
+        "description": "Waybar pills built for Mango: ext/workspaces, a live "
+                       "layout symbol, media, system modules and the same "
+                       "brightness/power helpers as the mangobar preset.",
+        "source": "Mango-safe layout + local palette",
+        "source_url": "https://github.com/mangowm/mango/wiki/status-bar",
+        "config": WAYBAR_BASE_CONFIG,
+        "css": _waybar_css(WAYBAR_PALETTES["midnight"]),
+    },
+    {
+        "id": "waybar-catppuccin",
+        "engine": "waybar",
+        "name": "Catppuccin Mocha",
+        "description": "Catppuccin Mocha cards, with blue clocks, mauve memory "
+                       "and peach brightness.",
+        "source": "Palette: catppuccin/waybar",
+        "source_url": "https://github.com/catppuccin/waybar",
+        "config": WAYBAR_BASE_CONFIG,
+        "css": _waybar_css(WAYBAR_PALETTES["catppuccin"]),
+    },
+    {
+        "id": "waybar-rosepine",
+        "engine": "waybar",
+        "name": "Rosé Pine Moon",
+        "description": "Rosé Pine Moon surfaces and iris/rose accents in the "
+                       "same Mango-safe module layout.",
+        "source": "Palette: rose-pine/waybar",
+        "source_url": "https://github.com/rose-pine/waybar",
+        "config": WAYBAR_BASE_CONFIG,
+        "css": _waybar_css(WAYBAR_PALETTES["rosepine"]),
+    },
+    {
+        "id": "waybar-tokyonight",
+        "engine": "waybar",
+        "name": "Tokyo Night",
+        "description": "Navy cards with Tokyo Night's blue, violet and green "
+                       "accents.",
+        "source": "Palette: folke/tokyonight.nvim",
+        "source_url": "https://github.com/folke/tokyonight.nvim",
+        "config": WAYBAR_BASE_CONFIG,
+        "css": _waybar_css(WAYBAR_PALETTES["tokyonight"]),
+    },
+]
 
 # Filled in by configure_profile() before the UI is built.
 CONFIG_DIR = DEFAULT_CONFIG_DIR
@@ -434,6 +1024,568 @@ def _write_text(path, value):
         os.replace(tmp, path)
     except OSError:
         pass
+
+
+# ---- JSONC / bar helpers ---------------------------------------------------
+
+def _jsonc_strip(text):
+    """Remove // and /* */ comments plus trailing commas outside strings."""
+    out = []
+    i, n = 0, len(text)
+    in_str = False
+    while i < n:
+        c = text[i]
+        if in_str:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if c == '"':
+                in_str = False
+            i += 1
+            continue
+        if c == '"':
+            in_str = True
+            out.append(c)
+            i += 1
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "/":
+            while i < n and text[i] != "\n":
+                i += 1
+            if i < n:
+                out.append("\n")
+                i += 1
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "*":
+            i += 2
+            while i + 1 < n and not (text[i] == "*" and text[i + 1] == "/"):
+                i += 1
+            i += 2
+            continue
+        if c in "}]":
+            j = len(out)
+            while j > 0 and out[j - 1] in " \t\r\n":
+                j -= 1
+            if j > 0 and out[j - 1] == ",":
+                del out[j - 1]
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def _parse_jsonc(text, default=None):
+    """Parse JSON-with-comments; return default on any syntax error."""
+    try:
+        data = json.loads(_jsonc_strip(text))
+    except (TypeError, ValueError):
+        return default
+    return data
+
+
+def _read_jsonc(path, default=None):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        return default
+    return _parse_jsonc(text, default)
+
+
+def _bar_config_dir(engine):
+    config_home = os.path.abspath(os.path.expanduser(
+        os.environ.get("XDG_CONFIG_HOME") or "~/.config"))
+    if engine == "mangobar":
+        env = os.environ.get("MANGOBAR_CONFIG")
+        if env:
+            return os.path.dirname(os.path.abspath(os.path.expanduser(env)))
+        return os.path.join(config_home, "mangobar")
+    return os.path.join(config_home, "waybar")
+
+
+def _bar_config_paths(engine):
+    """Return (config_path, style_path) preferring an existing extension."""
+    directory = _bar_config_dir(engine)
+    if engine == "mangobar":
+        env = os.environ.get("MANGOBAR_CONFIG")
+        if env:
+            config = os.path.abspath(os.path.expanduser(env))
+            return config, os.path.join(directory, "style.css")
+    config = None
+    for name in ("config.jsonc", "config.json"):
+        candidate = os.path.join(directory, name)
+        if os.path.isfile(candidate) or config is None:
+            config = candidate
+        if os.path.isfile(candidate):
+            break
+    return config or os.path.join(directory, "config.jsonc"), \
+        os.path.join(directory, "style.css")
+
+
+def _bar_executable(engine):
+    name = "mangobar" if engine == "mangobar" else "waybar"
+    for pid in _bar_pids(engine):
+        try:
+            target = os.readlink("/proc/%d/exe" % pid)
+            if target:
+                return target
+        except OSError:
+            pass
+    return shutil.which(name) or name
+
+
+def _bar_pids(engine):
+    name = "mangobar" if engine == "mangobar" else "waybar"
+    try:
+        out = subprocess.run(["pgrep", "-x", name], capture_output=True,
+                             text=True, timeout=2)
+        return [int(x) for x in out.stdout.split() if x.isdigit()]
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return []
+
+
+def _service_active(unit):
+    try:
+        out = subprocess.run(
+            ["systemctl", "--user", "is-active", "--quiet", unit],
+            timeout=2)
+        return out.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _service_exists(unit):
+    try:
+        out = subprocess.run(
+            ["systemctl", "--user", "cat", unit],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
+        return out.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _bar_restart(engine):
+    """Restart or reload a bar without sudo. Returns (ok, message)."""
+    unit = "mangobar.service" if engine == "mangobar" else "waybar.service"
+    if _service_active(unit):
+        try:
+            out = subprocess.run(["systemctl", "--user", "restart", unit],
+                                 capture_output=True, text=True, timeout=10)
+            if out.returncode == 0:
+                return True, "Restarted " + unit
+            return False, (out.stderr or out.stdout or "systemctl restart failed").strip()
+        except (OSError, subprocess.SubprocessError) as ex:
+            return False, str(ex)
+    pids = _bar_pids(engine)
+    if not pids:
+        return False, "not running"
+    if engine == "waybar":
+        try:
+            subprocess.run(["pkill", "-USR2", "-x", "waybar"], timeout=3)
+            return True, "Asked Waybar to reload"
+        except (OSError, subprocess.SubprocessError) as ex:
+            return False, str(ex)
+    exe = _bar_executable(engine)
+    try:
+        subprocess.run(["pkill", "-TERM", "-x", "mangobar"], timeout=3)
+        deadline = time.time() + 3
+        while time.time() < deadline and _bar_pids(engine):
+            time.sleep(0.05)
+        subprocess.Popen([exe], stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+        return True, "Restarted " + os.path.basename(exe)
+    except (OSError, subprocess.SubprocessError) as ex:
+        return False, str(ex)
+
+
+def _bar_start(engine):
+    unit = "mangobar.service" if engine == "mangobar" else "waybar.service"
+    if _service_active(unit):
+        return True, "Already running"
+    if _service_exists(unit):
+        try:
+            out = subprocess.run(["systemctl", "--user", "start", unit],
+                                 capture_output=True, text=True, timeout=10)
+            if out.returncode == 0:
+                return True, "Started " + unit
+            return False, (out.stderr or out.stdout or "start failed").strip()
+        except (OSError, subprocess.SubprocessError) as ex:
+            return False, str(ex)
+    if _bar_pids(engine):
+        return True, "Already running"
+    exe = shutil.which("mangobar" if engine == "mangobar" else "waybar")
+    if not exe:
+        return False, "not installed"
+    try:
+        subprocess.Popen([exe], stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+        return True, "Started " + os.path.basename(exe)
+    except (OSError, subprocess.SubprocessError) as ex:
+        return False, str(ex)
+
+
+def _bar_stop(engine):
+    unit = "mangobar.service" if engine == "mangobar" else "waybar.service"
+    if _service_active(unit):
+        try:
+            subprocess.run(["systemctl", "--user", "stop", unit],
+                           capture_output=True, text=True, timeout=10)
+            return True, "Stopped " + unit
+        except (OSError, subprocess.SubprocessError) as ex:
+            return False, str(ex)
+    if not _bar_pids(engine):
+        return True, "Not running"
+    try:
+        subprocess.run(["pkill", "-TERM", "-x", engine], timeout=3)
+        return True, "Stopped " + engine
+    except (OSError, subprocess.SubprocessError) as ex:
+        return False, str(ex)
+
+
+def _bar_backup(path):
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        bakdir = os.path.join(os.path.dirname(path), ".autobak")
+        os.makedirs(bakdir, exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        target = os.path.join(bakdir, stamp + "-" + os.path.basename(path))
+        shutil.copy2(path, target)
+        return target
+    except OSError:
+        return None
+
+
+def _bar_config_text(engine, config, preset=None):
+    title = "Waybar" if engine == "waybar" else "mangobar"
+    note = "// %s configuration written by Mango Config" % title
+    if preset:
+        note += " — preset: " + preset
+    note += ".\n// Review the file after applying; a timestamped copy is in .autobak/.\n\n"
+    return note + json.dumps(config, indent=4, ensure_ascii=False) + "\n"
+
+
+def _jsonc_depths(text):
+    """Brace/bracket depth at every character, ignoring strings and comments."""
+    depths = [0] * (len(text) + 1)
+    stack = []
+    in_str = False
+    i, n = 0, len(text)
+    while i < n:
+        depths[i] = len(stack)
+        c = text[i]
+        if in_str:
+            if c == "\\" and i + 1 < n:
+                depths[i + 1] = len(stack)
+                i += 2
+                continue
+            if c == '"':
+                in_str = False
+            i += 1
+            continue
+        if c == '"':
+            in_str = True
+            i += 1
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "/":
+            i += 2
+            while i < n and text[i] != "\n":
+                depths[i] = len(stack)
+                i += 1
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "*":
+            i += 2
+            while i + 1 < n and not (text[i] == "*" and text[i + 1] == "/"):
+                depths[i] = len(stack)
+                i += 1
+            if i < n:
+                depths[i] = len(stack)
+            if i + 1 < n:
+                depths[i + 1] = len(stack)
+            i += 2
+            continue
+        if c in "{[":
+            stack.append(c)
+            depths[i] = len(stack)
+            i += 1
+            continue
+        if c in "}]":
+            if stack:
+                stack.pop()
+            depths[i] = len(stack)
+            i += 1
+            continue
+        i += 1
+    depths[n] = len(stack)
+    return depths
+
+
+def _set_jsonc_top_level(text, updates):
+    """Update scalar top-level JSONC keys while keeping comments when possible.
+
+    Only keys at the root object are touched: nested modules often repeat names
+    such as ``height`` or ``interval``. The fallback reserializes the parsed
+    object, so unusual formatting never silently skips a requested setting.
+    """
+    result = text
+    for key, value in updates.items():
+        value_text = json.dumps(value, ensure_ascii=False)
+        pattern = re.compile(
+            r'(?m)^([ \t]{0,8})"' + re.escape(key) +
+            r'"([ \t]*:[ \t]*)([^\n]*?)(,?[ \t]*(?://.*)?)$')
+        depths = _jsonc_depths(result)
+        match = None
+        for candidate in pattern.finditer(result):
+            if depths[candidate.start()] == 1:
+                match = candidate
+                break
+        if match is not None:
+            result = (result[:match.start()] + '%s"%s"%s%s%s' % (
+                match.group(1), key, match.group(2), value_text,
+                match.group(4)) + result[match.end():])
+            continue
+
+        depths = _jsonc_depths(result)
+        idx = -1
+        for j in range(len(result) - 1, -1, -1):
+            if result[j] == "}" and depths[j] == 0:
+                idx = j
+                break
+        if idx < 0:
+            continue
+        prefix = result[:idx].rstrip()
+        if prefix and not prefix.endswith(("{", ",")):
+            prefix += ","
+        result = prefix + '\n    "%s": %s\n' % (key, value_text) + result[idx:]
+    parsed = _parse_jsonc(result)
+    if parsed is None:
+        old = _parse_jsonc(text, {}) or {}
+        old.update(updates)
+        result = json.dumps(old, indent=4, ensure_ascii=False) + "\n"
+    return result
+
+
+def _write_file(path, value):
+    """Write text atomically without adding an extra trailing newline."""
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(value)
+    os.replace(tmp, path)
+
+
+def _bar_status(engine):
+    unit = "mangobar.service" if engine == "mangobar" else "waybar.service"
+    config, style = _bar_config_paths(engine)
+    data = _read_jsonc(config, {})
+    if not isinstance(data, dict):
+        data = {}
+    pids = _bar_pids(engine)
+    service_active = _service_active(unit)
+    return {
+        "engine": engine,
+        "unit": unit,
+        "pids": pids,
+        "running": bool(pids) or service_active,
+        "service_active": service_active,
+        "service_exists": _service_exists(unit),
+        "config": config,
+        "style": style,
+        "config_exists": os.path.isfile(config),
+        "style_exists": os.path.isfile(style),
+        "height": data.get("height"),
+        "layer": data.get("layer"),
+        "position": data.get("position"),
+    }
+
+
+def _bar_apply_preset(preset):
+    """Back up and write a preset's config and stylesheet."""
+    engine = preset.get("engine")
+    if engine not in ("mangobar", "waybar"):
+        return False, "Unknown bar engine"
+    config, style = _bar_config_paths(engine)
+    try:
+        os.makedirs(os.path.dirname(config), exist_ok=True)
+        _bar_backup(config)
+        _bar_backup(style)
+        _write_file(config, _bar_config_text(
+            engine, preset.get("config") or {}, preset.get("name")))
+        _write_file(style, preset.get("css") or "")
+    except OSError as ex:
+        return False, str(ex)
+    return True, "Wrote %s and %s" % (shortpath(config), shortpath(style))
+
+
+def _bar_quick_save(engine, updates):
+    """Update top-level options in an existing bar config."""
+    if engine not in ("mangobar", "waybar"):
+        return False, "Unknown bar engine"
+    config, _style = _bar_config_paths(engine)
+    if os.path.isfile(config):
+        try:
+            with open(config, encoding="utf-8") as fh:
+                text = fh.read()
+        except OSError as ex:
+            return False, str(ex)
+    else:
+        base = MANGOBAR_BASE_CONFIG if engine == "mangobar" else WAYBAR_BASE_CONFIG
+        text = _bar_config_text(engine, base)
+    if _parse_jsonc(text, None) is None:
+        return False, "Could not parse %s; left it unchanged" % shortpath(config)
+    new_text = _set_jsonc_top_level(text, updates)
+    try:
+        _bar_backup(config)
+        _write_file(config, new_text)
+    except OSError as ex:
+        return False, str(ex)
+    return True, "Updated " + shortpath(config)
+
+
+# ---- tiling helpers --------------------------------------------------------
+
+TILING_BLOCK_RE = re.compile(
+    r"(?ms)^[ \t]*" + re.escape(TILING_BEGIN) +
+    r"[^\n]*\n.*?^[ \t]*" + re.escape(TILING_END) + r"[^\n]*(?:\n|$)")
+
+
+def _layout_label(name):
+    return (name or "?").replace("_", " ").title()
+
+
+def _tiling_rules_from_text(text):
+    """Read the managed monitor→layout rules, ignoring everything outside."""
+    match = TILING_BLOCK_RE.search(text or "")
+    rules = {}
+    if match is None:
+        return rules
+    for line in match.group(0).splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("tag_rule"):
+            continue
+        if "=" not in stripped:
+            continue
+        values = parse_kv(stripped.split("=", 1)[1])
+        monitor = values.get("monitor_name")
+        layout = values.get("layout_name")
+        if values.get("id") == "*" and monitor and layout:
+            rules[monitor] = layout
+    return rules
+
+
+def _tiling_text_with_rules(text, rules):
+    """Replace the managed block, preserving all user content around it."""
+    cleaned = TILING_BLOCK_RE.sub("", text or "")
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).rstrip() + "\n"
+    if not rules:
+        return cleaned
+    lines = [
+        TILING_BEGIN,
+        "# Managed by Mango Config's Tiling page; edits inside this block are replaced.",
+    ]
+    for monitor in sorted(rules):
+        lines.append("tag_rule = id:*, monitor_name:%s, layout_name:%s" %
+                     (monitor, rules[monitor]))
+    lines.append(TILING_END)
+    return cleaned + "\n" + "\n".join(lines) + "\n"
+
+
+def _tiling_config_path():
+    if PROFILE is not None and PROFILE.main:
+        return PROFILE.main
+    return os.path.join(CONFIG_DIR, "config.conf")
+
+
+def _tiling_read_defaults(path=None):
+    path = path or _tiling_config_path()
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return _tiling_rules_from_text(fh.read())
+    except OSError:
+        return {}
+
+
+def _tiling_save_default(monitor, layout=None, path=None):
+    """Add or remove a monitor-wide layout rule in the managed block."""
+    if not monitor or any(ch in monitor for ch in ",\n\r:"):
+        return False, "Invalid monitor name"
+    if layout and layout not in LAYOUT_BY_NAME:
+        return False, "Unknown layout: " + str(layout)
+    path = path or _tiling_config_path()
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError as ex:
+        return False, str(ex)
+    rules = _tiling_rules_from_text(text)
+    if layout:
+        rules[monitor] = layout
+    else:
+        rules.pop(monitor, None)
+    try:
+        _bar_backup(path)
+        _write_file(path, _tiling_text_with_rules(text, rules))
+    except OSError as ex:
+        return False, str(ex)
+    if layout:
+        return True, "Saved %s as the default for %s" % (
+            _layout_label(layout), monitor)
+    return True, "Removed the managed default for " + monitor
+
+
+def _mmsg_json(args, timeout=2.5):
+    """Run mmsg and parse its JSON reply; None when Mango is unavailable."""
+    if not shutil.which("mmsg"):
+        return None
+    try:
+        out = subprocess.run(["mmsg"] + list(args), capture_output=True,
+                             text=True, timeout=timeout)
+        if out.returncode != 0:
+            return None
+        return json.loads(out.stdout)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+
+
+def _mmsg_dispatch(*args):
+    if not shutil.which("mmsg"):
+        return False, "mmsg not found"
+    try:
+        out = subprocess.run(["mmsg", "dispatch"] + list(args),
+                             capture_output=True, text=True, timeout=4)
+        text = (out.stdout or out.stderr or "").strip()
+        if out.returncode != 0:
+            return False, text or "mmsg failed"
+        try:
+            data = json.loads(out.stdout)
+        except ValueError:
+            data = None
+        if isinstance(data, dict) and data.get("error"):
+            return False, str(data.get("error"))
+        return True, text or "ok"
+    except (OSError, subprocess.SubprocessError) as ex:
+        return False, str(ex)
+
+
+def _current_layout_symbol():
+    """Best-effort current layout symbol for the focused monitor."""
+    focused = _mmsg_json(["get", "focusing-client"])
+    monitor = focused.get("monitor") if isinstance(focused, dict) else None
+    if not monitor:
+        data = _mmsg_json(["get", "all-monitors"]) or {}
+        monitors = data.get("monitors") if isinstance(data, dict) else None
+        if monitors:
+            monitor = monitors[0].get("name")
+    if monitor:
+        data = _mmsg_json(["get", "monitor", monitor]) or {}
+        symbol = data.get("layout_symbol")
+        if symbol:
+            return str(symbol)
+    return "?"
 
 
 def _discover_wallpaper_dir():
@@ -1529,6 +2681,14 @@ class App(Gtk.Application):
         side.set_selection_mode(Gtk.SelectionMode.SINGLE)
 
         sections = [
+            ("Desktop", [
+                ("Bar", "bar", self.b_bar, "preferences-desktop-theme",
+                 "mangobar + Waybar",
+                 "Pick a bar, tune its basics, or apply a credited GitHub preset."),
+                ("Tiling", "tiling", self.b_tiling, "view-grid-symbolic",
+                 LAYOUT or "mango IPC",
+                 "See the live layout for each monitor and switch it with mmsg."),
+            ]),
             ("Appearance", [
                 ("Layout & gaps", "layout", self.b_layout, "preferences-desktop-theme", LAYOUT,
                  "Gaps, borders and corner rounding for the tiling layout."),
@@ -1632,7 +2792,7 @@ class App(Gtk.Application):
         body.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
         body.append(stack)
 
-        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.footer_bar = bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         bar.set_margin_top(10)
         bar.set_margin_start(12)
         bar.set_margin_end(12)
@@ -1648,6 +2808,18 @@ class App(Gtk.Application):
         bar.append(rb)
         bar.append(ab)
         bar.append(self.status)
+
+        self.footer_sep = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+
+        def _sync_footer(*_args):
+            name = stack.get_visible_child_name()
+            immediate = name in ("bar", "tiling")
+            self.footer_bar.set_visible(not immediate)
+            self.footer_sep.set_visible(not immediate)
+
+        stack.connect("notify::visible-child", _sync_footer)
+        self._sync_footer = _sync_footer
+        _sync_footer()
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         problem = (PROFILE.error if PROFILE is not None and PROFILE.error else
                    (f"Config directory not found: {CONFIG_DIR}"
@@ -1689,7 +2861,7 @@ class App(Gtk.Application):
         self.guard_revealer.set_child(gbox)
         root.append(self.guard_revealer)
         root.append(body)
-        root.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+        root.append(self.footer_sep)
         root.append(bar)
         win.set_child(root)
         win.connect("close-request", self._on_close_request)
@@ -1901,6 +3073,85 @@ class App(Gtk.Application):
                 padding: 6px 10px;
                 margin: 8px 8px 0 8px;
             }
+            .bar-card {
+                background: alpha(currentColor, 0.045);
+                border: 1px solid alpha(currentColor, 0.10);
+                border-radius: 11px;
+                padding: 9px 11px;
+            }
+            .bar-title { font-weight: 800; }
+            .bar-state {
+                font-size: 0.78em;
+                font-weight: 800;
+                border-radius: 999px;
+                padding: 1px 8px;
+                background: alpha(currentColor, 0.08);
+            }
+            .bar-state.on {
+                background: alpha(#57e389, 0.20);
+                color: #57e389;
+            }
+            .bar-state.off { opacity: 0.62; }
+            .bar-path {
+                font-family: monospace;
+                font-size: 0.78em;
+                opacity: 0.62;
+            }
+            .error-text { color: #ff7b72; }
+            .preset-card {
+                background: alpha(currentColor, 0.045);
+                border: 1px solid alpha(currentColor, 0.10);
+                border-radius: 11px;
+                padding: 9px;
+            }
+            .preset-card:hover { border-color: alpha(#5aa7ff, 0.45); }
+            .monitor-card {
+                background: alpha(currentColor, 0.035);
+                border: 1px solid alpha(currentColor, 0.08);
+                border-radius: 9px;
+                padding: 7px 9px;
+            }
+            .monitor-card.selected-monitor {
+                border-color: alpha(#5aa7ff, 0.55);
+                background: alpha(#5aa7ff, 0.08);
+            }
+            .layout-symbol {
+                font-family: monospace;
+                font-weight: 800;
+                background: alpha(#5aa7ff, 0.15);
+                border-radius: 8px;
+                padding: 0 8px;
+                min-width: 30px;
+            }
+            .tag-chip {
+                font-size: 0.78em;
+                font-weight: 700;
+                border-radius: 6px;
+                padding: 1px 6px;
+                background: alpha(currentColor, 0.06);
+                opacity: 0.62;
+            }
+            .tag-chip.occupied { opacity: 0.85; }
+            .tag-chip.active {
+                background: alpha(#5aa7ff, 0.82);
+                color: #ffffff;
+                opacity: 1;
+            }
+            .layout-card {
+                background: alpha(currentColor, 0.04);
+                border: 1px solid alpha(currentColor, 0.10);
+                border-radius: 10px;
+                padding: 7px 9px;
+                min-height: 42px;
+            }
+            .layout-card:hover {
+                background: alpha(currentColor, 0.08);
+                border-color: alpha(#5aa7ff, 0.40);
+            }
+            .layout-card.current {
+                border-color: alpha(#57e389, 0.75);
+                background: alpha(#57e389, 0.10);
+            }
             """)
             disp = Gdk.Display.get_default()
             if disp is not None:
@@ -1910,6 +3161,869 @@ class App(Gtk.Application):
             pass
 
     # ---- builders
+
+    def _bar_feedback(self, engine, message, error=False):
+        label = getattr(self, "bar_feedback_labels", {}).get(engine)
+        if label is None:
+            return
+        label.set_text(message or "")
+        if error:
+            label.add_css_class("error-text")
+        else:
+            label.remove_css_class("error-text")
+
+    def _bar_status_card(self, engine, title, blurb):
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        card.add_css_class("bar-card")
+        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        icon = Gtk.Image.new_from_icon_name("preferences-desktop-theme")
+        icon.set_valign(Gtk.Align.CENTER)
+        name = Gtk.Label(label=title)
+        name.add_css_class("bar-title")
+        name.set_xalign(0)
+        state = Gtk.Label(label="…")
+        state.add_css_class("bar-state")
+        state.set_xalign(0)
+        head.append(icon)
+        head.append(name)
+        head.append(state)
+
+        buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        buttons.set_hexpand(True)
+        buttons.set_halign(Gtk.Align.END)
+        start = Gtk.Button(label="Start")
+        stop = Gtk.Button(label="Stop")
+        restart = Gtk.Button(label="Restart")
+        open_btn = Gtk.Button.new_from_icon_name("folder-open-symbolic")
+        open_btn.set_tooltip_text("Open the bar's config folder")
+        start.connect("clicked", lambda _b: self._bar_action(engine, "start"))
+        stop.connect("clicked", lambda _b: self._bar_action(engine, "stop"))
+        restart.connect("clicked", lambda _b: self._bar_action(engine, "restart"))
+        open_btn.connect("clicked", lambda _b: subprocess.Popen(
+            ["xdg-open", _bar_config_dir(engine)]))
+        buttons.append(open_btn)
+        buttons.append(start)
+        buttons.append(stop)
+        buttons.append(restart)
+        head.append(buttons)
+        card.append(head)
+
+        meta = Gtk.Label(label=blurb)
+        meta.add_css_class("dim-label")
+        meta.set_xalign(0)
+        meta.set_wrap(True)
+        card.append(meta)
+
+        paths = Gtk.Label(label="")
+        paths.add_css_class("bar-path")
+        paths.set_xalign(0)
+        paths.set_wrap(True)
+        paths.set_selectable(True)
+        card.append(paths)
+
+        feedback = Gtk.Label(label="")
+        feedback.add_css_class("dim-label")
+        feedback.set_xalign(0)
+        feedback.set_wrap(True)
+        card.append(feedback)
+
+        self.bar_status_labels[engine] = state
+        self.bar_meta_labels[engine] = meta
+        self.bar_path_labels[engine] = paths
+        self.bar_feedback_labels[engine] = feedback
+        self.bar_action_buttons[engine] = {
+            "start": start, "stop": stop, "restart": restart}
+        return card
+
+    def _bar_action(self, engine, action):
+        if action == "start":
+            ok, message = _bar_start(engine)
+        elif action == "stop":
+            ok, message = _bar_stop(engine)
+        else:
+            ok, message = _bar_restart(engine)
+        self._bar_feedback(engine, message, error=not ok)
+        self._refresh_bar_status()
+
+    def _refresh_bar_status(self):
+        if self.win is None:
+            return False
+        for engine in ("mangobar", "waybar"):
+            state = _bar_status(engine)
+            label = self.bar_status_labels.get(engine)
+            meta = self.bar_meta_labels.get(engine)
+            paths = self.bar_path_labels.get(engine)
+            buttons = self.bar_action_buttons.get(engine)
+            if label is None:
+                continue
+            installed = bool(shutil.which("mangobar" if engine == "mangobar"
+                                          else "waybar"))
+            if state["running"]:
+                if state["service_active"]:
+                    text = "Running · " + state["unit"]
+                else:
+                    text = "Running · PID " + ", ".join(
+                        str(p) for p in state["pids"])
+                label.set_text(text)
+                label.remove_css_class("off")
+                label.add_css_class("on")
+            else:
+                if state["service_exists"]:
+                    text = "Stopped · service available"
+                elif installed:
+                    text = "Stopped · executable available"
+                else:
+                    text = "Stopped · not installed"
+                label.set_text(text)
+                label.remove_css_class("on")
+                label.add_css_class("off")
+
+            bits = []
+            if state["height"] is not None:
+                bits.append("%s px" % state["height"])
+            if state["layer"]:
+                bits.append("layer %s" % state["layer"])
+            if state["position"]:
+                bits.append("position %s" % state["position"])
+            if not state["config_exists"]:
+                bits.append("config will be created on first save")
+            detail = " · ".join(bits)
+            meta.set_text(("Mango tags, layout and status modules. " + detail)
+                          if engine == "mangobar" else
+                          ("Waybar with ext/workspaces and a mmsg-backed layout "
+                           "module. " + detail))
+
+            config = shortpath(state["config"])
+            style = shortpath(state["style"])
+            paths.set_text("config: %s\nstyle:  %s" % (config, style))
+            paths.set_tooltip_text("config: %s\nstyle: %s" % (
+                state["config"], state["style"]))
+
+            if buttons:
+                buttons["start"].set_sensitive(
+                    not state["running"] and
+                    (state["service_exists"] or installed))
+                buttons["stop"].set_sensitive(state["running"])
+                buttons["restart"].set_sensitive(state["running"])
+        return False
+
+    def _bar_status_tick(self):
+        if self.win is None:
+            return False
+        self._refresh_bar_status()
+        return True
+
+    def _confirm_action(self, title, detail, on_confirm):
+        dialog = Gtk.AlertDialog()
+        dialog.set_message(title)
+        dialog.set_detail(detail)
+        dialog.set_buttons(["Cancel", "Continue"])
+        dialog.set_cancel_button(0)
+        dialog.set_default_button(1)
+
+        def finished(source, result):
+            try:
+                choice = source.choose_finish(result)
+            except GLib.Error:
+                return
+            if choice == 1:
+                on_confirm()
+
+        dialog.choose(self.win, None, finished)
+
+    def _bar_preset_card(self, preset):
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        card.add_css_class("preset-card")
+        card.set_size_request(320, -1)
+        card.set_hexpand(True)
+
+        name = Gtk.Label(label=preset.get("name", preset.get("id", "Preset")))
+        name.add_css_class("bar-title")
+        name.set_xalign(0)
+        name.set_wrap(True)
+        card.append(name)
+
+        swatches = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=3)
+        palettes = (MANGOBAR_PALETTES if preset.get("engine") == "mangobar"
+                    else WAYBAR_PALETTES)
+        palette = palettes.get(preset.get("id", "").split("-")[-1])
+        if palette is None:
+            palette = next(iter(palettes.values()))
+        keys = (("accent", "accent2", "surface", "bg")
+                if preset.get("engine") == "mangobar"
+                else ("accent", "accent2", "green", "base"))
+        for key in keys:
+            color = palette.get(key)
+            if not color:
+                continue
+            dot = Gtk.Label()
+            dot.set_markup('<span foreground="%s" size="x-large">●</span>' %
+                           color)
+            dot.set_tooltip_text("%s %s" % (key, color))
+            swatches.append(dot)
+        card.append(swatches)
+
+        desc = Gtk.Label(label=preset.get("description", ""))
+        desc.add_css_class("dim-label")
+        desc.set_xalign(0)
+        desc.set_wrap(True)
+        desc.set_max_width_chars(46)
+        card.append(desc)
+
+        bottom = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        source = Gtk.LinkButton.new_with_label(
+            preset.get("source_url", ""), preset.get("source", "source"))
+        source.add_css_class("dim-label")
+        source.set_tooltip_text(preset.get("source_url", ""))
+        bottom.append(source)
+        apply_btn = Gtk.Button(label="Apply preset")
+        apply_btn.add_css_class("suggested-action")
+        apply_btn.set_hexpand(True)
+        apply_btn.set_halign(Gtk.Align.END)
+        apply_btn.connect(
+            "clicked", lambda _b: self._bar_confirm_preset(preset))
+        bottom.append(apply_btn)
+        card.append(bottom)
+        return card
+
+    def _bar_confirm_preset(self, preset):
+        engine = preset.get("engine", "mangobar")
+        name = preset.get("name", preset.get("id", "preset"))
+        detail = (
+            "This replaces %s and %s with the %s preset. Existing files are "
+            "copied into .autobak first." % (
+                shortpath(_bar_config_paths(engine)[0]),
+                shortpath(_bar_config_paths(engine)[1]), name))
+        if _bar_pids(engine):
+            detail += " The running bar will restart."
+        self._confirm_action("Apply %s?" % name, detail,
+                             lambda: self._bar_apply_preset_now(preset))
+
+    def _bar_apply_preset_now(self, preset):
+        engine = preset.get("engine", "mangobar")
+        ok, message = _bar_apply_preset(preset)
+        if not ok:
+            self._bar_feedback(engine, message, error=True)
+            return
+        if _bar_pids(engine):
+            restarted, restart_msg = _bar_restart(engine)
+            if not restarted:
+                message += " · restart failed: " + restart_msg
+        self._bar_feedback(engine, message)
+        self._refresh_bar_status()
+
+    def _bar_settings_page(self, engine):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        page.set_hexpand(True)
+        base = MANGOBAR_BASE_CONFIG if engine == "mangobar" else WAYBAR_BASE_CONFIG
+        config, _style = _bar_config_paths(engine)
+        data = _read_jsonc(config, {})
+        if not isinstance(data, dict):
+            data = {}
+
+        quick = Section("Quick settings")
+        height = self._spin(
+            float(data.get("height", base.get("height", 34))), 20, 80, 1)
+        quick.add_row("Bar height (px)", height)
+        layer_values = ["top", "bottom", "overlay", "background"]
+        layer = Gtk.DropDown.new_from_strings(layer_values)
+        current_layer = str(data.get("layer", base.get("layer", "top")))
+        layer.set_selected(layer_values.index(current_layer)
+                           if current_layer in layer_values else 0)
+        quick.add_row("Layer", layer)
+        widgets = {"height": height, "layer": layer}
+
+        if engine == "waybar":
+            positions = ["top", "bottom", "left", "right"]
+            position = Gtk.DropDown.new_from_strings(positions)
+            current = str(data.get("position", base.get("position", "top")))
+            position.set_selected(positions.index(current)
+                                  if current in positions else 0)
+            quick.add_row("Position", position)
+            widgets["position"] = position
+            for key, label in (("margin-left", "Margin left"),
+                               ("margin-right", "Margin right"),
+                               ("margin-top", "Margin top"),
+                               ("margin-bottom", "Margin bottom")):
+                spin = self._spin(float(data.get(key, base.get(key, 0))),
+                                  0, 800, 1)
+                quick.add_row(label + " (px)", spin)
+                widgets[key] = spin
+
+        modules = []
+        for key in ("modules-left", "modules-center", "modules-right"):
+            value = data.get(key, base.get(key, [])) or []
+            if not isinstance(value, list):
+                value = [value]
+            modules.append("%s  %s" % (
+                key.replace("modules-", "").title(),
+                ", ".join(str(v) for v in value) if value else "empty"))
+        module_label = Gtk.Label(label="\n".join(modules))
+        module_label.add_css_class("mono-raw")
+        module_label.set_xalign(0)
+        module_label.set_wrap(True)
+        module_label.set_selectable(True)
+        quick.box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+        module_note = Gtk.Label(label="Current modules")
+        module_note.add_css_class("wr-section-label")
+        module_note.set_xalign(0)
+        quick.box.append(module_note)
+        quick.box.append(module_label)
+
+        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        save = Gtk.Button(label="Save quick settings")
+        save.connect("clicked", lambda _b: self._bar_confirm_quick(engine))
+        actions.append(save)
+        quick.box.append(actions)
+
+        note = Gtk.Label(label=(
+            "Quick settings edit only top-level options and keep the rest of "
+            "the file. Applying a preset replaces both config and style; a "
+            "timestamped copy is kept in .autobak. A running bar is restarted "
+            "so the change is visible immediately."))
+        note.add_css_class("dim-label")
+        note.set_xalign(0)
+        note.set_wrap(True)
+        quick.box.append(note)
+
+        presets = Section("Recommended presets")
+        flow = Gtk.FlowBox()
+        flow.set_selection_mode(Gtk.SelectionMode.NONE)
+        flow.set_max_children_per_line(4)
+        flow.set_min_children_per_line(2)
+        flow.set_homogeneous(True)
+        flow.set_column_spacing(8)
+        flow.set_row_spacing(8)
+        for preset in BAR_PRESETS:
+            if preset.get("engine") == engine:
+                flow.append(self._bar_preset_card(preset))
+        presets.box.append(flow)
+        credit = Gtk.Label(label=(
+            "Palettes are credited on each card. Layouts and CSS are written "
+            "for Mango's module names; no third-party stylesheet is copied "
+            "wholesale."))
+        credit.add_css_class("dim-label")
+        credit.set_xalign(0)
+        credit.set_wrap(True)
+        presets.box.append(credit)
+
+        page.append(quick)
+        page.append(presets)
+        page.append(Gtk.Box(hexpand=True))
+        self.bar_quick[engine] = widgets
+        return page
+
+    def _bar_confirm_quick(self, engine):
+        updates = {}
+        quick = self.bar_quick.get(engine, {})
+        if "height" in quick:
+            updates["height"] = int(quick["height"].get_value())
+        for key in ("layer", "position"):
+            if key not in quick:
+                continue
+            index = quick[key].get_selected()
+            values = (["top", "bottom", "overlay", "background"] if key == "layer"
+                      else ["top", "bottom", "left", "right"])
+            if 0 <= index < len(values):
+                updates[key] = values[index]
+        for key in ("margin-left", "margin-right", "margin-top", "margin-bottom"):
+            if key in quick:
+                updates[key] = int(quick[key].get_value())
+        detail = "This updates %s and keeps its modules and comments." % (
+            shortpath(_bar_config_paths(engine)[0]))
+        if _bar_pids(engine):
+            detail += " The running bar will restart."
+        self._confirm_action("Save bar settings?", detail,
+                             lambda: self._bar_save_quick_now(engine, updates))
+
+    def _bar_save_quick_now(self, engine, updates):
+        ok, message = _bar_quick_save(engine, updates)
+        if not ok:
+            self._bar_feedback(engine, message, error=True)
+            return
+        if _bar_pids(engine):
+            restarted, restart_msg = _bar_restart(engine)
+            if restarted:
+                message += " · bar restarted"
+            else:
+                message += " · restart failed: " + restart_msg
+        self._bar_feedback(engine, message)
+        self._refresh_bar_status()
+
+    def b_bar(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        page.set_margin_top(8)
+        page.set_margin_start(12)
+        page.set_margin_end(12)
+        page.set_margin_bottom(12)
+        page.set_hexpand(True)
+        self.bar_status_labels = {}
+        self.bar_meta_labels = {}
+        self.bar_path_labels = {}
+        self.bar_feedback_labels = {}
+        self.bar_action_buttons = {}
+        self.bar_quick = {}
+
+        intro = Gtk.Label(label=(
+            "Mango Config talks to both installed bars. mangobar is built for "
+            "Mango's tags; Waybar uses ext/workspaces plus a small custom "
+            "module that prints the live layout through mmsg."))
+        intro.add_css_class("dim-label")
+        intro.set_xalign(0)
+        intro.set_wrap(True)
+        page.append(intro)
+
+        bars = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        bars.append(self._bar_status_card(
+            "mangobar", "mangobar",
+            "Mango's native bar. Tags, layout, title and system modules."))
+        bars.append(self._bar_status_card(
+            "waybar", "Waybar",
+            "A Waybar setup that stays Mango-safe. No Hyprland-only modules."))
+        page.append(bars)
+
+        self.bar_stack = Gtk.Stack()
+        self.bar_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        self.bar_stack.set_transition_duration(120)
+        self.bar_stack.add_titled(self._bar_settings_page("mangobar"),
+                                  "mangobar", "mangobar")
+        self.bar_stack.add_titled(self._bar_settings_page("waybar"),
+                                  "waybar", "Waybar")
+        switcher = Gtk.StackSwitcher()
+        switcher.set_stack(self.bar_stack)
+        switcher.set_halign(Gtk.Align.START)
+        choose = Gtk.Label(label="Configure")
+        choose.add_css_class("page-title")
+        choose.set_xalign(0)
+        choose.set_hexpand(True)
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        row.append(choose)
+        row.append(switcher)
+        page.append(row)
+        page.append(self.bar_stack)
+        page.append(Gtk.Box(hexpand=True))
+
+        self._refresh_bar_status()
+        self._bar_status_src = GLib.timeout_add_seconds(8, self._bar_status_tick)
+        return page
+
+    def _tiling_selected_monitor(self):
+        names = getattr(self, "tiling_monitor_names", [])
+        dropdown = getattr(self, "tiling_target_dd", None)
+        if dropdown is None or not names:
+            return None
+        index = dropdown.get_selected()
+        if 0 <= index < len(names):
+            return names[index]
+        return names[0]
+
+    def _tiling_update_target_info(self):
+        if not hasattr(self, "tiling_target_label"):
+            return
+        monitor = self._tiling_selected_monitor()
+        data = getattr(self, "tiling_monitor_data", {}).get(monitor)
+        if not data:
+            self.tiling_target_label.set_text(
+                "No monitor selected. Start Mango or refresh.")
+            return
+        symbol = data.get("layout_symbol", "?")
+        name = LAYOUT_SYMBOL_NAME.get(symbol)
+        active = data.get("active_tags") or []
+        label = "%s · tag %s · %s (%s)" % (
+            monitor,
+            ", ".join(str(t) for t in active) if active else "?",
+            _layout_label(name) if name else "unknown",
+            symbol)
+        self.tiling_target_label.set_text(label)
+
+    def _tiling_mark_cards(self):
+        monitor = self._tiling_selected_monitor()
+        data = getattr(self, "tiling_monitor_data", {}).get(monitor, {})
+        symbol = data.get("layout_symbol")
+        current = LAYOUT_SYMBOL_NAME.get(symbol)
+        for name, button in getattr(self, "tiling_layout_buttons", {}).items():
+            if name == current:
+                button.add_css_class("current")
+            else:
+                button.remove_css_class("current")
+        for name, card in getattr(self, "tiling_live_cards", {}).items():
+            if name == monitor:
+                card.add_css_class("selected-monitor")
+            else:
+                card.remove_css_class("selected-monitor")
+
+    def _tiling_sync_default_choice(self):
+        monitor = self._tiling_selected_monitor()
+        rules = getattr(self, "tiling_defaults", {})
+        data = getattr(self, "tiling_monitor_data", {}).get(monitor, {})
+        symbol = data.get("layout_symbol")
+        layout = rules.get(monitor) or LAYOUT_SYMBOL_NAME.get(symbol) or "tile"
+        names = [name for name, _s, _f, _d in LAYOUT_INFO]
+        if layout in names:
+            self.tiling_default_dd.set_selected(names.index(layout))
+        self.tiling_remove_btn.set_sensitive(monitor in rules)
+        self.tiling_target_label.set_tooltip_text(
+            "The default is a managed tag_rule in config.conf; runtime changes "
+            "above only affect the current tag.")
+
+    def _tiling_refresh_defaults(self):
+        rules = _tiling_read_defaults()
+        self.tiling_defaults = rules
+        if rules:
+            text = "\n".join("• %s → %s (%s)" % (
+                monitor, _layout_label(layout), layout)
+                for monitor, layout in sorted(rules.items()))
+        else:
+            text = ("No managed defaults yet. Pick a layout above, then save it "
+                    "to make it survive Mango restarts.")
+        self.tiling_defaults_label.set_text(text)
+        self._tiling_sync_default_choice()
+
+    def _tiling_target_changed(self, *_args):
+        if getattr(self, "_tiling_updating", False):
+            return
+        monitor = self._tiling_selected_monitor()
+        if monitor:
+            self.tiling_selected_name = monitor
+        self._tiling_update_target_info()
+        self._tiling_mark_cards()
+        self._tiling_sync_default_choice()
+
+    def _tiling_live_row(self, monitor):
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        card.add_css_class("monitor-card")
+        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        name = Gtk.Label(label=str(monitor.get("name", "monitor")))
+        name.add_css_class("bar-title")
+        name.set_xalign(0)
+        size = Gtk.Label(label="%s×%s" % (
+            monitor.get("width", "?"), monitor.get("height", "?")))
+        size.add_css_class("dim-label")
+        size.set_xalign(0)
+        symbol = str(monitor.get("layout_symbol", "?"))
+        layout = LAYOUT_SYMBOL_NAME.get(symbol)
+        badge = Gtk.Label(label=symbol)
+        badge.add_css_class("layout-symbol")
+        layout_name = Gtk.Label(label=_layout_label(layout) if layout else "unknown")
+        layout_name.add_css_class("bar-title")
+        layout_name.set_xalign(0)
+        head.append(name)
+        head.append(size)
+        spacer = Gtk.Box()
+        spacer.set_hexpand(True)
+        head.append(spacer)
+        head.append(badge)
+        head.append(layout_name)
+        card.append(head)
+
+        tags = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        tags.set_halign(Gtk.Align.START)
+        for tag in monitor.get("tags", []) or []:
+            chip = Gtk.Label(label=str(tag.get("index", "?")))
+            chip.add_css_class("tag-chip")
+            if tag.get("is_active"):
+                chip.add_css_class("active")
+            if tag.get("client_count"):
+                chip.add_css_class("occupied")
+            tag_symbol = str(tag.get("layout", "?"))
+            tag_name = LAYOUT_SYMBOL_NAME.get(tag_symbol)
+            chip.set_tooltip_text(
+                "Tag %s · %s · %s window(s)" % (
+                    tag.get("index", "?"),
+                    _layout_label(tag_name) if tag_name else tag_symbol,
+                    tag.get("client_count", 0)))
+            tags.append(chip)
+        card.append(tags)
+        return card
+
+    def _rebuild_tiling_live(self, monitors):
+        self._clear_container(self.tiling_live_box)
+        self.tiling_live_cards = {}
+        for monitor in monitors:
+            name = str(monitor.get("name", "monitor"))
+            row = self._tiling_live_row(monitor)
+            self.tiling_live_cards[name] = row
+            self.tiling_live_box.append(row)
+        self._tiling_mark_cards()
+
+    def _sync_tiling_targets(self, names):
+        current = getattr(self, "tiling_monitor_names", [])
+        self.tiling_monitor_names = names
+        if names == current:
+            return
+        self._tiling_updating = True
+        try:
+            self.tiling_target_dd.set_model(Gtk.StringList.new(names))
+            if names:
+                selected = self.tiling_selected_name
+                if selected not in names:
+                    selected = names[0]
+                self.tiling_selected_name = selected
+                self.tiling_target_dd.set_selected(names.index(selected))
+            self.tiling_target_dd.set_sensitive(bool(names))
+        finally:
+            self._tiling_updating = False
+
+    def _refresh_tiling(self, force=False):
+        if self.win is None:
+            return False
+        payload = _mmsg_json(["get", "all-monitors"])
+        monitors = payload.get("monitors") if isinstance(payload, dict) else None
+        if not monitors:
+            monitors = []
+        active = [m for m in monitors if m.get("active", True)]
+        names = [str(m.get("name")) for m in active if m.get("name")]
+        self.tiling_monitor_data = {
+            str(m.get("name")): m for m in active if m.get("name")}
+        self._sync_tiling_targets(names)
+        key = json.dumps(active, sort_keys=True, ensure_ascii=False)
+        if force or key != getattr(self, "tiling_live_key", None):
+            self.tiling_live_key = key
+            if active:
+                self._rebuild_tiling_live(active)
+            else:
+                self._clear_container(self.tiling_live_box)
+                missing = Gtk.Label(label=(
+                    "Mango IPC is unavailable, or no active monitor was "
+                    "reported. Refresh after starting a Mango session."))
+                missing.add_css_class("dim-label")
+                missing.set_xalign(0)
+                missing.set_wrap(True)
+                self.tiling_live_box.append(missing)
+        self._tiling_update_target_info()
+        self._tiling_mark_cards()
+        return False
+
+    def _tiling_tick(self):
+        if self.win is None:
+            return False
+        self._refresh_tiling()
+        return True
+
+    def _tiling_filter(self, *_args):
+        text = self.tiling_search.get_text().strip().casefold()
+        for name, button in self.tiling_layout_buttons.items():
+            symbol, family, desc = LAYOUT_BY_NAME[name]
+            haystack = " ".join((name, symbol, family, desc)).casefold()
+            button.set_visible(not text or text in haystack)
+
+    def _tiling_apply_layout(self, layout):
+        if layout not in LAYOUT_BY_NAME:
+            return
+        monitor = self._tiling_selected_monitor()
+        if not monitor:
+            self.tiling_feedback.set_text(
+                "No monitor is available. Start Mango and refresh.")
+            self.tiling_feedback.add_css_class("error-text")
+            return
+        focused, focus_msg = _mmsg_dispatch("focusmon", monitor)
+        if not focused:
+            self.tiling_feedback.set_text(
+                "Could not focus %s, so the layout was not changed: %s" %
+                (monitor, focus_msg))
+            self.tiling_feedback.add_css_class("error-text")
+            return
+        ok, message = _mmsg_dispatch("setlayout", layout)
+        if not ok:
+            self.tiling_feedback.set_text(
+                "Could not switch %s: %s" % (monitor, message))
+            self.tiling_feedback.add_css_class("error-text")
+            return
+        self.tiling_feedback.remove_css_class("error-text")
+        self.tiling_feedback.set_text(
+            "Applied %s (%s) to %s." %
+            (_layout_label(layout), layout, monitor))
+        names = [name for name, _s, _f, _d in LAYOUT_INFO]
+        if layout in names:
+            self.tiling_default_dd.set_selected(names.index(layout))
+        self._refresh_tiling(force=True)
+
+    def _tiling_save_default_clicked(self):
+        monitor = self._tiling_selected_monitor()
+        if not monitor:
+            return
+        index = self.tiling_default_dd.get_selected()
+        names = [name for name, _s, _f, _d in LAYOUT_INFO]
+        if not (0 <= index < len(names)):
+            return
+        layout = names[index]
+        ok, message = _tiling_save_default(monitor, layout)
+        self.tiling_feedback.set_text(message)
+        if ok:
+            self.tiling_feedback.remove_css_class("error-text")
+            self.tiling_feedback.set_text(
+                message + ". Takes effect after Mango reloads config.conf.")
+            self._tiling_refresh_defaults()
+        else:
+            self.tiling_feedback.add_css_class("error-text")
+
+    def _tiling_remove_default_clicked(self):
+        monitor = self._tiling_selected_monitor()
+        if not monitor:
+            return
+        ok, message = _tiling_save_default(monitor, None)
+        self.tiling_feedback.set_text(message)
+        if ok:
+            self.tiling_feedback.remove_css_class("error-text")
+            self._tiling_refresh_defaults()
+        else:
+            self.tiling_feedback.add_css_class("error-text")
+
+    def _tiling_layout_card(self, name):
+        symbol, family, desc = LAYOUT_BY_NAME[name]
+        button = Gtk.Button()
+        button.add_css_class("layout-card")
+        button.set_size_request(250, -1)
+        button.set_tooltip_text(desc)
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        sym = Gtk.Label(label=symbol)
+        sym.add_css_class("layout-symbol")
+        sym.set_valign(Gtk.Align.CENTER)
+        text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        title = Gtk.Label(label=_layout_label(name))
+        title.add_css_class("bar-title")
+        title.set_xalign(0)
+        sub = Gtk.Label(label=family)
+        sub.add_css_class("dim-label")
+        sub.set_xalign(0)
+        text.append(title)
+        text.append(sub)
+        box.append(sym)
+        box.append(text)
+        button.set_child(box)
+        button.connect("clicked",
+                       lambda _b, layout=name: self._tiling_apply_layout(layout))
+        return button
+
+    def b_tiling(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        page.set_margin_top(8)
+        page.set_margin_start(12)
+        page.set_margin_end(12)
+        page.set_margin_bottom(12)
+        page.set_hexpand(True)
+        self.tiling_monitor_names = []
+        self.tiling_selected_name = None
+        self.tiling_monitor_data = {}
+        self.tiling_live_cards = {}
+        self.tiling_layout_buttons = {}
+        self.tiling_defaults = {}
+        self._tiling_updating = False
+
+        live = Section("Live layout")
+        live_top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        live_info = Gtk.Label(label=(
+            "Read through Mango IPC every few seconds. The symbol matches the "
+            "bar's layout module."))
+        live_info.add_css_class("dim-label")
+        live_info.set_xalign(0)
+        live_info.set_wrap(True)
+        live_info.set_hexpand(True)
+        refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic")
+        refresh.set_tooltip_text("Refresh monitor and layout state now")
+        refresh.connect("clicked", lambda _b: self._refresh_tiling(force=True))
+        live_top.append(live_info)
+        live_top.append(refresh)
+        live.box.append(live_top)
+        self.tiling_live_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        live.box.append(self.tiling_live_box)
+        page.append(live)
+
+        apply_section = Section("Apply layout")
+        target_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        target_label = Gtk.Label(label="Monitor")
+        target_label.set_xalign(0)
+        self.tiling_target_dd = Gtk.DropDown.new_from_strings(["No monitor"])
+        self.tiling_target_dd.set_sensitive(False)
+        self.tiling_target_dd.connect("notify::selected",
+                                      self._tiling_target_changed)
+        self.tiling_target_label = Gtk.Label(label="")
+        self.tiling_target_label.set_xalign(0)
+        self.tiling_target_label.set_wrap(True)
+        self.tiling_target_label.set_hexpand(True)
+        self.tiling_target_label.add_css_class("dim-label")
+        target_row.append(target_label)
+        target_row.append(self.tiling_target_dd)
+        target_row.append(self.tiling_target_label)
+        apply_section.box.append(target_row)
+
+        search_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.tiling_search = Gtk.SearchEntry()
+        self.tiling_search.set_placeholder_text(
+            "Filter layouts by name, family or description…")
+        self.tiling_search.set_hexpand(True)
+        self.tiling_search.connect("search-changed", self._tiling_filter)
+        search_row.append(self.tiling_search)
+        apply_section.box.append(search_row)
+
+        flow = Gtk.FlowBox()
+        flow.set_selection_mode(Gtk.SelectionMode.NONE)
+        flow.set_max_children_per_line(4)
+        flow.set_min_children_per_line(2)
+        flow.set_homogeneous(True)
+        flow.set_column_spacing(8)
+        flow.set_row_spacing(8)
+        for name, _symbol, _family, _desc in LAYOUT_INFO:
+            button = self._tiling_layout_card(name)
+            self.tiling_layout_buttons[name] = button
+            flow.append(button)
+        apply_section.box.append(flow)
+        apply_note = Gtk.Label(label=(
+            "Click a card to switch the selected monitor's current tag. Mango "
+            "stores the layout per tag, so another tag or monitor is unchanged."))
+        apply_note.add_css_class("dim-label")
+        apply_note.set_xalign(0)
+        apply_note.set_wrap(True)
+        apply_section.box.append(apply_note)
+
+        self.tiling_feedback = Gtk.Label(label="")
+        self.tiling_feedback.set_xalign(0)
+        self.tiling_feedback.set_wrap(True)
+        self.tiling_feedback.add_css_class("dim-label")
+        apply_section.box.append(self.tiling_feedback)
+        page.append(apply_section)
+
+        defaults = Section("Default after reload")
+        defaults_note = Gtk.Label(label=(
+            "Runtime switches above are temporary. Save a monitor-wide default "
+            "to write a managed tag_rule block at the end of config.conf. The "
+            "block is rewritten by this page and leaves your other rules alone."))
+        defaults_note.add_css_class("dim-label")
+        defaults_note.set_xalign(0)
+        defaults_note.set_wrap(True)
+        defaults.box.append(defaults_note)
+        self.tiling_defaults_label = Gtk.Label(label="")
+        self.tiling_defaults_label.set_xalign(0)
+        self.tiling_defaults_label.set_wrap(True)
+        defaults.box.append(self.tiling_defaults_label)
+
+        default_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        default_label = Gtk.Label(label="Layout")
+        default_label.set_xalign(0)
+        layout_names = [name for name, _s, _f, _d in LAYOUT_INFO]
+        self.tiling_default_dd = Gtk.DropDown.new_from_strings(
+            [_layout_label(name) for name in layout_names])
+        self.tiling_default_dd.set_selected(0)
+        save = Gtk.Button(label="Save for selected monitor")
+        save.connect("clicked",
+                     lambda _b: self._tiling_save_default_clicked())
+        self.tiling_remove_btn = Gtk.Button(label="Remove default")
+        self.tiling_remove_btn.connect(
+            "clicked", lambda _b: self._tiling_remove_default_clicked())
+        self.tiling_remove_btn.set_sensitive(False)
+        default_row.append(default_label)
+        default_row.append(self.tiling_default_dd)
+        default_row.append(save)
+        default_row.append(self.tiling_remove_btn)
+        defaults.box.append(default_row)
+        page.append(defaults)
+        page.append(Gtk.Box(hexpand=True))
+
+        self._tiling_refresh_defaults()
+        self._refresh_tiling(force=True)
+        self._tiling_timeout = GLib.timeout_add_seconds(3, self._tiling_tick)
+        return page
 
     def b_layout(self):
         specs = [
@@ -4677,6 +6791,14 @@ class App(Gtk.Application):
         self.apply_btn.set_sensitive(True)
 
     def _on_close_request(self, *_a):
+        for attr in ("_bar_status_src", "_tiling_timeout"):
+            source = getattr(self, attr, None)
+            if source is not None:
+                try:
+                    GLib.source_remove(source)
+                except Exception:
+                    pass
+                setattr(self, attr, None)
         if getattr(self, "_guard_old", None) is not None:
             self._guard_finish(True)
         return False
@@ -4738,11 +6860,14 @@ def parse_args(argv):
     ap.add_argument("--config-dir", metavar="DIR",
                     help="Mango config directory (default: ~/.config/mango)")
     ap.add_argument("--tab", metavar="ID",
-                    help="open a tab directly (layout, theme, colors, cursor, keyboard, "
-                         "mouse, touchpad, keys, wallpaper, outputs, brightness, night, "
-                         "apps, rules)")
+                    help="open a tab directly (bar, tiling, layout, theme, colors, "
+                         "cursor, keyboard, mouse, touchpad, keys, wallpaper, "
+                         "outputs, brightness, night, apps, rules)")
     ap.add_argument("--no-reload", action="store_true",
                     help="write and validate, but do not reload Mango")
+    ap.add_argument("--print-layout", action="store_true",
+                    help="print the focused monitor's layout symbol and exit "
+                         "(used by the Waybar custom/layout module)")
     ap.add_argument("--version", action="version",
                     version="mango-config " + VERSION)
     return ap.parse_args(argv)
@@ -4750,6 +6875,9 @@ def parse_args(argv):
 
 def main():
     args = parse_args(sys.argv[1:])
+    if args.print_layout:
+        print(_current_layout_symbol())
+        return 0
     config_dir = os.path.abspath(os.path.expanduser(
         args.config_dir or os.environ.get("MANGO_CONFIG_DIR") or "~/.config/mango"))
     profile = discover_profile(config_dir)
