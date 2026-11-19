@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.5.0 — 2026-11-18
+
+A Material 3 remaster of the whole app, plus the pending parsing fixes.
+
+### New look
+
+- Dark-first Material 3 design whose accent is generated from Mango's live
+  `focus_color`, with tonal surfaces, containers, outlines and state layers
+  derived from it. The light palette is used when the desktop does not prefer
+  dark; `MANGO_CONFIG_THEME=light|dark` overrides the choice.
+- New custom app bar with the Mango logo, an engine chip (DMS or Mango), the
+  version, and native window controls.
+- Reworked 244 px navigation drawer: grouped categories, icons, pill-shaped
+  selection, and a search field that filters pages by name or description.
+- Every page now has an icon tile, Material typography, and a path chip that
+  shows the relevant config file relative to the config folder.
+- Settings are grouped into filled cards with accent bars, hover rows, and
+  optional descriptions. Inputs, spin buttons, dropdowns, switches, check
+  chips, sliders, popovers, expanders, keycaps, and scrollbars all follow the
+  same Material treatment.
+- Restyled every custom page: bars and presets, tiling layouts and tag badges,
+  monitor cards, colour cards, wallpaper previews, window rules, keybind
+  groups, and the countdown guard dialog.
+- The action bar keeps status on the left and gives Reload and Apply fixed
+  positions on the right. Status messages use success and error colours.
+- Empty states are now explicit cards instead of bare labels.
+
+### Fixes
+
+- Monitor and window rules written as `monitor_rule = ...` or
+  `window_rule = ...` (spaces around `=`) are recognized again. Previously the
+  editor treated the restored rule as invisible and appended a second,
+  incomplete rule.
+- Width and height are only written together with refresh, because Mango
+  rejects a monitor rule that sets them without it.
+- Keybinds written as `bind = SUPER, Return, spawn, kitty` are parsed again.
+  The Keybinds page now lists all 80 binds from the DMS-adapted config instead
+  of showing an empty page.
+- Keyboard **Variant** and **Options** fields expand to the full row width, so
+  placeholders and long values are readable.
+- Fixed the Night light and Default apps navigation icons on icon themes that
+  lack the original names.
+
+## 0.4.3 — 2026-11-14
+
+Monitor and window rule parsing fixes.
+
+- Rule lines written as `monitor_rule = ...` or `window_rule = ...` (spaces
+  around `=`) are now recognized. Previously the editor treated the restored
+  rule as invisible and appended a second, incomplete rule.
+- Width and height are only written together with refresh, because Mango
+  rejects a monitor rule that sets them without it. The page note now says so.
+- Added regression tests for spaced rule lines and for dropping an incomplete
+  resolution instead of writing an invalid rule.
+
 ## 0.4.2 — 2026-11-14
 
 Monitor-rule scale fix.

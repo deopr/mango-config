@@ -26,7 +26,7 @@ try:
 except (ImportError, ValueError):
     GdkPixbuf = None
 
-VERSION = "0.4.2"
+VERSION = "0.5.0"
 APP_ID = "io.github.deopr.MangoConfig"
 
 DEFAULT_CONFIG_DIR = os.path.abspath(os.path.expanduser(
@@ -984,6 +984,218 @@ def shortpath(path):
     if not path:
         return "not found"
     return path.replace(os.path.expanduser("~"), "~")
+
+
+def display_path(path):
+    """Short, readable path for the page header: relative to the config dir."""
+    if not path:
+        return "not found"
+    try:
+        root = os.path.realpath(CONFIG_DIR)
+        real = os.path.realpath(path)
+        if os.path.commonpath([root, real]) == root:
+            rel = os.path.relpath(real, root)
+            return rel if rel != "." else os.path.basename(real)
+    except Exception:
+        pass
+    return shortpath(path)
+
+
+def _hex_to_rgb(value):
+    """Parse #rgb, #rrggbb, 0xrrggbb or 0xrrggbbaa into an (r, g, b) tuple."""
+    if not value:
+        return None
+    text = str(value).strip().lower()
+    if text.startswith("0x"):
+        text = text[2:]
+    elif text.startswith("#"):
+        text = text[1:]
+    else:
+        return None
+    if len(text) == 3:
+        text = "".join(ch * 2 for ch in text)
+    if len(text) == 8:  # Mango stores RGBA with the alpha byte last.
+        text = text[:6]
+    if len(text) != 6:
+        return None
+    try:
+        return tuple(int(text[i:i + 2], 16) for i in (0, 2, 4))
+    except ValueError:
+        return None
+
+
+def _rgb_hex(rgb):
+    vals = [max(0, min(255, int(round(c)))) for c in rgb]
+    return "#%02x%02x%02x" % tuple(vals)
+
+
+def _mix_rgb(a, b, amount):
+    return tuple(a[i] * (1 - amount) + b[i] * amount for i in range(3))
+
+
+def _mix_hex(a, b, amount):
+    return _rgb_hex(_mix_rgb(_hex_to_rgb(a), _hex_to_rgb(b), amount))
+
+
+def _rgba(rgb, alpha):
+    return "rgba(%d, %d, %d, %.3f)" % (rgb[0], rgb[1], rgb[2], alpha)
+
+
+def _luminance(rgb):
+    def channel(value):
+        value = value / 255.0
+        if value <= 0.03928:
+            return value / 12.92
+        return ((value + 0.055) / 1.055) ** 2.4
+    return (0.2126 * channel(rgb[0]) + 0.7152 * channel(rgb[1])
+            + 0.0722 * channel(rgb[2]))
+
+
+def _readable_on(rgb):
+    return "#14151a" if _luminance(rgb) > 0.42 else "#ffffff"
+
+
+def material_tokens():
+    """Material 3-inspired tokens, seeded by Mango's live focus color."""
+    settings = Gtk.Settings.get_default()
+    theme_name = ""
+    prefer_dark = True
+    if settings is not None:
+        try:
+            theme_name = str(settings.get_property("gtk-theme-name") or "")
+            prefer_dark = bool(
+                settings.get_property("gtk-application-prefer-dark-theme"))
+        except Exception:
+            pass
+    override = os.environ.get("MANGO_CONFIG_THEME", "").strip().lower()
+    if override in ("dark", "light"):
+        dark = override == "dark"
+    else:
+        dark = prefer_dark or "dark" in theme_name.lower()
+
+    accent = None
+    try:
+        if COLORS and os.path.isfile(COLORS):
+            accent = _hex_to_rgb(get_simple(read_lines(COLORS), "focus_color"))
+    except Exception:
+        accent = None
+    if accent is None:
+        accent = (166, 185, 254)
+
+    if dark:
+        base = (15, 17, 23)
+        surface = _rgb_hex(_mix_rgb(base, accent, 0.025))
+        surface_lowest = _rgb_hex(_mix_rgb(base, (0, 0, 0), 0.22))
+        surface_low = _rgb_hex(_mix_rgb(base, accent, 0.065))
+        surface_container_low = _rgb_hex(_mix_rgb(base, (255, 255, 255), 0.035))
+        surface_container = _rgb_hex(_mix_rgb(base, (255, 255, 255), 0.055))
+        surface_high = _rgb_hex(_mix_rgb(base, (255, 255, 255), 0.090))
+        surface_highest = _rgb_hex(_mix_rgb(base, (255, 255, 255), 0.135))
+        surface_variant = _rgb_hex(_mix_rgb(base, (255, 255, 255), 0.190))
+        on_surface = "#e8eaf1"
+        on_surface_variant = "#b6bbc9"
+        outline = "#8991a3"
+        outline_variant = "#333a49"
+        primary = _rgb_hex(accent)
+        primary_container = _mix_hex(primary, surface_container, 0.72)
+        on_primary_container = _mix_hex(primary, "#ffffff", 0.56)
+        secondary_container = _mix_hex(primary, surface_container, 0.84)
+        on_secondary_container = _mix_hex(primary, "#ffffff", 0.72)
+        error = "#ffb4ab"
+        on_error = "#690005"
+        error_container = "#5c1a1a"
+        on_error_container = "#ffdad6"
+        success = "#8ee6a8"
+        success_container = "#173b24"
+        warning = "#ffd27a"
+        warning_container = "#3f2f00"
+        on_warning_container = "#ffe7ad"
+    else:
+        base = (252, 250, 255)
+        surface = _rgb_hex(_mix_rgb(base, accent, 0.015))
+        surface_lowest = "#ffffff"
+        surface_low = _rgb_hex(_mix_rgb(base, accent, 0.035))
+        surface_container_low = _rgb_hex(_mix_rgb(base, accent, 0.045))
+        surface_container = _rgb_hex(_mix_rgb(base, accent, 0.060))
+        surface_high = _rgb_hex(_mix_rgb(base, accent, 0.090))
+        surface_highest = _rgb_hex(_mix_rgb(base, accent, 0.120))
+        surface_variant = _rgb_hex(_mix_rgb(base, accent, 0.160))
+        on_surface = "#1a1b21"
+        on_surface_variant = "#494a55"
+        outline = "#777887"
+        outline_variant = "#cfccd8"
+        primary = _mix_hex(_rgb_hex(accent), "#171820", 0.42)
+        primary_container = _mix_hex(_rgb_hex(accent), "#ffffff", 0.78)
+        on_primary_container = _mix_hex(primary, "#000000", 0.30)
+        secondary_container = _mix_hex(_rgb_hex(accent), "#ffffff", 0.86)
+        on_secondary_container = _mix_hex(primary, "#000000", 0.30)
+        error = "#b3261e"
+        on_error = "#ffffff"
+        error_container = "#f9dedc"
+        on_error_container = "#410e0b"
+        success = "#1e6b35"
+        success_container = "#d7f5df"
+        warning = "#7a5900"
+        warning_container = "#ffdf9e"
+        on_warning_container = "#271900"
+
+    on_primary = _readable_on(_hex_to_rgb(primary))
+    on = _hex_to_rgb(on_surface)
+    primary_rgb = _hex_to_rgb(primary)
+    outline_rgb = _hex_to_rgb(outline)
+    error_rgb = _hex_to_rgb(error)
+    success_rgb = _hex_to_rgb(success)
+    warning_rgb = _hex_to_rgb(warning)
+
+    tokens = {
+        "surface": surface,
+        "surface_lowest": surface_lowest,
+        "surface_low": surface_low,
+        "surface_container_low": surface_container_low,
+        "surface_container": surface_container,
+        "surface_high": surface_high,
+        "surface_highest": surface_highest,
+        "surface_variant": surface_variant,
+        "on_surface": on_surface,
+        "on_surface_variant": on_surface_variant,
+        "on_surface_muted": _mix_hex(on_surface, surface, 0.42),
+        "outline": outline,
+        "outline_variant": outline_variant,
+        "primary": primary,
+        "on_primary": on_primary,
+        "primary_hover": _mix_hex(primary, "#ffffff" if dark else "#000000", 0.10),
+        "primary_active": _mix_hex(primary, "#ffffff" if dark else "#000000", 0.18),
+        "primary_container": primary_container,
+        "on_primary_container": on_primary_container,
+        "secondary_container": secondary_container,
+        "on_secondary_container": on_secondary_container,
+        "secondary_hover": _mix_hex(secondary_container, on_secondary_container, 0.10),
+        "secondary_active": _mix_hex(secondary_container, on_secondary_container, 0.18),
+        "error": error,
+        "on_error": on_error,
+        "error_container": error_container,
+        "on_error_container": on_error_container,
+        "success": success,
+        "success_container": success_container,
+        "warning": warning,
+        "warning_container": warning_container,
+        "on_warning_container": on_warning_container,
+        "black_24": "rgba(0, 0, 0, 0.24)",
+        "black_35": "rgba(0, 0, 0, 0.35)",
+        "black_48": "rgba(0, 0, 0, 0.48)",
+        "white": "#ffffff",
+    }
+    for step in (4, 6, 8, 10, 12, 16, 20, 24, 32, 40, 48):
+        tokens["on_surface_%02d" % step] = _rgba(on, step / 100.0)
+        tokens["primary_%02d" % step] = _rgba(primary_rgb, step / 100.0)
+        tokens["outline_%02d" % step] = _rgba(outline_rgb, step / 100.0)
+        tokens["error_%02d" % step] = _rgba(error_rgb, step / 100.0)
+        tokens["success_%02d" % step] = _rgba(success_rgb, step / 100.0)
+        tokens["warning_%02d" % step] = _rgba(warning_rgb, step / 100.0)
+    tokens["black_24"] = "rgba(0, 0, 0, 0.24)"
+    tokens["black_35"] = "rgba(0, 0, 0, 0.35)"
+    tokens["black_48"] = "rgba(0, 0, 0, 0.48)"
+    return tokens
 
 
 def _read_json(path):
@@ -2494,6 +2706,12 @@ def _rule_number(kv, key, default=0.0):
         return default
 
 
+def _rule_value(raw, key):
+    """Value of a `key = value` rule line, allowing spaces around `=`."""
+    match = re.match(r"^%s\s*=\s*(.*)$" % re.escape(key), (raw or "").strip())
+    return match.group(1).strip() if match else None
+
+
 def build_kv(d, order):
     return ",".join(f"{k}:{d.get(k, '')}" for k in order if k in d)
 
@@ -2578,40 +2796,71 @@ def discover_cursor_themes():
 
 
 class Row(Gtk.Box):
-    def __init__(self, label, widget):
-        super().__init__(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        self.set_margin_top(6)
-        self.set_margin_bottom(6)
+    def __init__(self, label, widget, description=None, expand=False):
+        super().__init__(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
+        self.add_css_class("set-row")
         self.set_hexpand(True)
         self.set_valign(Gtk.Align.CENTER)
+        text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+        text.set_hexpand(True)
+        text.set_valign(Gtk.Align.CENTER)
         lbl = Gtk.Label(label=label)
+        lbl.add_css_class("set-row-label")
         lbl.set_halign(Gtk.Align.START)
         lbl.set_hexpand(True)
         lbl.set_xalign(0)
-        self.append(lbl)
-        widget.set_hexpand(False)
-        widget.set_halign(Gtk.Align.END)
+        lbl.set_wrap(True)
+        text.append(lbl)
+        if description:
+            desc = Gtk.Label(label=description)
+            desc.add_css_class("set-row-desc")
+            desc.set_xalign(0)
+            desc.set_wrap(True)
+            text.append(desc)
+        self.append(text)
+        if expand:
+            widget.set_hexpand(True)
+            widget.set_halign(Gtk.Align.FILL)
+        else:
+            widget.set_hexpand(False)
+            widget.set_halign(Gtk.Align.END)
+        widget.set_valign(Gtk.Align.CENTER)
         self.append(widget)
 
 
 class Section(Gtk.Box):
-    def __init__(self, title):
-        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        self.set_margin_top(10)
-        self.set_margin_start(12)
-        self.set_margin_end(12)
-        self.set_margin_bottom(6)
+    def __init__(self, title, subtitle=None):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.add_css_class("section-card")
+        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=9)
+        head.add_css_class("section-head")
+        accent = Gtk.Box()
+        accent.add_css_class("section-accent")
+        accent.set_valign(Gtk.Align.CENTER)
+        head.append(accent)
+        copy = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        copy.set_hexpand(True)
         lbl = Gtk.Label(label=title)
-        lbl.add_css_class("title")
+        lbl.add_css_class("section-title")
         lbl.set_halign(Gtk.Align.START)
-        self.append(lbl)
-        self.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
-        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        lbl.set_xalign(0)
+        copy.append(lbl)
+        if subtitle:
+            sub = Gtk.Label(label=subtitle)
+            sub.add_css_class("section-subtitle")
+            sub.set_halign(Gtk.Align.START)
+            sub.set_xalign(0)
+            sub.set_wrap(True)
+            copy.append(sub)
+        head.append(copy)
+        self.append(head)
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        self.box.add_css_class("section-body")
         self.box.set_hexpand(True)
         self.append(self.box)
 
-    def add_row(self, label, widget):
-        self.box.append(Row(label, widget))
+    def add_row(self, label, widget, description=None, expand=False):
+        self.box.append(Row(label, widget, description, expand))
 
 
 class App(Gtk.Application):
@@ -2663,10 +2912,73 @@ class App(Gtk.Application):
                               "order": order, "index": index,
                               "add_missing": add_missing})
 
+    def _brand_icon(self, size=32):
+        image = Gtk.Image()
+        has_app_icon = False
+        try:
+            disp = Gdk.Display.get_default()
+            if disp is not None:
+                has_app_icon = Gtk.IconTheme.get_for_display(disp).has_icon(APP_ID)
+        except Exception:
+            has_app_icon = False
+        if has_app_icon:
+            image.set_from_icon_name(APP_ID)
+        else:
+            image.set_from_icon_name("applications-system-symbolic")
+            image.add_css_class("brand-fallback")
+        image.set_pixel_size(size)
+        return image
+
+    def _build_app_bar(self):
+        handle = Gtk.WindowHandle()
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        bar.add_css_class("app-bar")
+        bar.set_hexpand(True)
+
+        brand = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        brand.add_css_class("app-brand")
+        brand.set_valign(Gtk.Align.CENTER)
+        brand.append(self._brand_icon(32))
+        copy = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        copy.set_valign(Gtk.Align.CENTER)
+        title = Gtk.Label(label="Mango Config")
+        title.add_css_class("app-title")
+        title.set_xalign(0)
+        subtitle = Gtk.Label(label="Mango Wayland settings")
+        subtitle.add_css_class("app-subtitle")
+        subtitle.set_xalign(0)
+        copy.append(title)
+        copy.append(subtitle)
+        brand.append(copy)
+        bar.append(brand)
+
+        spacer = Gtk.Box()
+        spacer.set_hexpand(True)
+        bar.append(spacer)
+
+        engine = Gtk.Label(label="DMS" if getattr(PROFILE, "dms", False) else "Mango")
+        engine.add_css_class("app-chip")
+        engine.set_tooltip_text(
+            "DMS is generating part of this config" if getattr(PROFILE, "dms", False)
+            else "Editing the Mango config directly")
+        version = Gtk.Label(label="v" + VERSION)
+        version.add_css_class("version-chip")
+        version.set_tooltip_text("Mango Config " + VERSION)
+        bar.append(engine)
+        bar.append(version)
+
+        controls = Gtk.WindowControls(side=Gtk.PackType.END)
+        controls.add_css_class("app-window-controls")
+        bar.append(controls)
+        handle.set_child(bar)
+        return handle
+
     def do_activate(self):
         win = Gtk.ApplicationWindow(application=self)
         self.win = win
         win.set_title("Mango Config")
+        win.add_css_class("app-window")
+        win.set_titlebar(self._build_app_bar())
         scr = None
         try:
             from gi.repository import Gdk as _Gdk
@@ -2677,11 +2989,11 @@ class App(Gtk.Application):
             scr = None
         geo = scr.get_monitor_geometry(0) if scr is not None else None
         if geo is not None:
-            w = max(640, int(geo.width * 0.92))
-            h = max(480, int(geo.height * 0.78))
-            win.set_default_size(min(w, 1440), min(h, 1000))
+            w = max(720, int(geo.width * 0.90))
+            h = max(560, int(geo.height * 0.86))
+            win.set_default_size(min(w, 1240), min(h, 920))
         else:
-            win.set_default_size(920, 840)
+            win.set_default_size(1100, 820)
         stack = Gtk.Stack()
         stack.set_hexpand(True)
         stack.set_vexpand(True)
@@ -2731,12 +3043,12 @@ class App(Gtk.Application):
                  "display-brightness-symbolic", "system brightness",
                  "Adjust the screen backlight or DDC/CI brightness for this session."),
                 ("Night light", "night", self.b_nightlight,
-                 "weather-clear-night-symbolic", "gammastep",
+                 "weather-clear-night", "gammastep",
                  "Warm the screen through gammastep for the current session."),
             ]),
             ("Behavior", [
                 ("Default apps", "apps", self.b_default_apps,
-                 "preferences-desktop-apps", DEFAULT_APPS_FILE,
+                 "applications-utilities", DEFAULT_APPS_FILE,
                  "Choose what opens folders, terminal links and web links."),
                 ("Window rules", "rules", self.b_windowrules, "preferences-system-windows", WINDOWRULES,
                  "Match apps by app_id or title, then set floating, size, "
@@ -2745,27 +3057,40 @@ class App(Gtk.Application):
         ]
 
         pid_rows = {}
+        nav_groups = []
         for cat, items in sections:
             hdr = Gtk.Label(label=cat.upper())
             hdr.add_css_class("nav-cat")
             hdr.set_xalign(0)
             row_h = Gtk.ListBoxRow()
+            row_h.add_css_class("nav-cat-row")
             row_h.set_selectable(False)
             row_h.set_activatable(False)
             row_h.set_child(hdr)
             side.append(row_h)
+            group_rows = []
             for title, pid, build, icon, path, desc in items:
-                stack.add_named(self._wrap_page(title, desc, path, build()), pid)
-                hb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-                hb.append(Gtk.Image.new_from_icon_name(icon))
+                stack.add_named(
+                    self._wrap_page(title, desc, path, build(), icon), pid)
+                hb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=11)
+                hb.add_css_class("nav-item")
+                Img = Gtk.Image.new_from_icon_name(icon)
+                Img.add_css_class("nav-icon")
+                Img.set_pixel_size(18)
+                hb.append(Img)
                 lbl = Gtk.Label(label=title)
+                lbl.add_css_class("nav-label")
                 lbl.set_xalign(0)
+                lbl.set_hexpand(True)
                 hb.append(lbl)
                 r = Gtk.ListBoxRow()
                 r.set_child(hb)
                 r._pid = pid
+                r._search = (title + " " + cat + " " + desc).lower()
                 side.append(r)
                 pid_rows[pid] = r
+                group_rows.append(r)
+            nav_groups.append((row_h, group_rows))
 
         def on_nav(_lb, r):
             if r is not None and getattr(r, "_pid", None):
@@ -2780,46 +3105,79 @@ class App(Gtk.Application):
         side.select_row(chosen)
         stack.set_visible_child_name(chosen._pid)
 
+        nav_search = Gtk.SearchEntry()
+        nav_search.add_css_class("nav-search")
+        nav_search.set_placeholder_text("Search settings")
+        nav_search.set_tooltip_text("Filter settings pages by name")
+
+        def on_nav_search(entry):
+            query = entry.get_text().strip().lower()
+            for header, rows in nav_groups:
+                any_visible = False
+                for r in rows:
+                    match = not query or query in r._search
+                    r.set_visible(match)
+                    any_visible = any_visible or match
+                header.set_visible(any_visible)
+
+        def on_nav_search_activate(entry):
+            for pid, r in pid_rows.items():
+                if r.get_visible():
+                    side.select_row(r)
+                    stack.set_visible_child_name(pid)
+                    break
+
+        nav_search.connect("search-changed", on_nav_search)
+        nav_search.connect("activate", on_nav_search_activate)
+
         nav_scroll = Gtk.ScrolledWindow()
         nav_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         nav_scroll.set_child(side)
         nav_scroll.set_vexpand(True)
 
         side_col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        side_col.set_size_request(196, -1)
+        side_col.add_css_class("sidebar")
+        side_col.set_size_request(244, -1)
+        side_col.append(nav_search)
         side_col.append(nav_scroll)
-        open_btn = Gtk.Button(label="Open config folder")
+        side_footer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        side_footer.add_css_class("sidebar-footer")
+        open_btn = Gtk.Button()
         open_btn.add_css_class("flat")
         open_btn.set_tooltip_text(CONFIG_DIR)
-        open_btn.set_margin_top(4)
-        open_btn.set_margin_start(8)
-        open_btn.set_margin_end(8)
-        open_btn.set_margin_bottom(8)
+        open_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        open_box.append(Gtk.Image.new_from_icon_name("folder-open-symbolic"))
+        open_label = Gtk.Label(label="Config folder")
+        open_label.set_xalign(0)
+        open_label.set_hexpand(True)
+        open_box.append(open_label)
+        open_btn.set_child(open_box)
         open_btn.connect("clicked", lambda _b: subprocess.Popen(["xdg-open", CONFIG_DIR]))
-        side_col.append(open_btn)
+        side_footer.append(open_btn)
+        side_col.append(side_footer)
 
         body = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         body.set_vexpand(True)
         body.append(side_col)
-        body.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
         body.append(stack)
 
-        self.footer_bar = bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        bar.set_margin_top(10)
-        bar.set_margin_start(12)
-        bar.set_margin_end(12)
-        bar.set_margin_bottom(10)
+        self.footer_bar = bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        bar.add_css_class("action-bar")
         self.status = Gtk.Label(label="")
+        self.status.add_css_class("status-label")
         self.status.set_hexpand(True)
-        self.status.set_xalign(1)
+        self.status.set_xalign(0)
+        self.status.set_wrap(True)
         ab = Gtk.Button(label="Apply & reload Mango")
         ab.add_css_class("suggested-action")
+        ab.set_tooltip_text("Write changed files, validate, then reload Mango")
         ab.connect("clicked", self.on_apply)
-        rb = Gtk.Button(label="Discard / reload from disk")
+        rb = Gtk.Button(label="Reload from disk")
+        rb.set_tooltip_text("Discard unsaved edits and read every field from disk")
         rb.connect("clicked", self.b_reset)
+        bar.append(self.status)
         bar.append(rb)
         bar.append(ab)
-        bar.append(self.status)
 
         self.footer_sep = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
 
@@ -2882,36 +3240,71 @@ class App(Gtk.Application):
         self.load_all()
 
     def _empty_page(self, message):
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        box.set_margin_top(24)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        box.add_css_class("empty-state")
+        box.set_margin_top(20)
         box.set_margin_start(16)
         box.set_margin_end(16)
+        box.set_margin_bottom(20)
+        icon = Gtk.Image.new_from_icon_name("dialog-information-symbolic")
+        icon.set_pixel_size(28)
+        icon.add_css_class("empty-icon")
+        icon.set_halign(Gtk.Align.START)
         lbl = Gtk.Label(label=message)
         lbl.add_css_class("dim-label")
         lbl.set_xalign(0)
         lbl.set_wrap(True)
+        box.append(icon)
         box.append(lbl)
         return box
 
-    def _wrap_page(self, title, subtitle, path, child):
-        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        header.set_margin_top(12)
-        header.set_margin_start(14)
-        header.set_margin_end(14)
-        header.set_margin_bottom(6)
+    def _wrap_page(self, title, subtitle, path, child, icon=None):
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+        header.add_css_class("page-header")
+        tile = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        tile.add_css_class("page-icon")
+        tile.set_valign(Gtk.Align.CENTER)
+        icon_widget = Gtk.Image.new_from_icon_name(
+            icon or "preferences-system-symbolic")
+        icon_widget.set_pixel_size(22)
+        icon_widget.set_halign(Gtk.Align.CENTER)
+        icon_widget.set_valign(Gtk.Align.CENTER)
+        tile.append(icon_widget)
+        header.append(tile)
+
+        copy = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        copy.set_hexpand(True)
+        copy.set_valign(Gtk.Align.CENTER)
         t = Gtk.Label(label=title)
         t.add_css_class("page-title")
         t.set_xalign(0)
         d = Gtk.Label(label=subtitle)
-        d.add_css_class("dim-label")
+        d.add_css_class("page-subtitle")
         d.set_xalign(0)
         d.set_wrap(True)
-        p = Gtk.Label(label=shortpath(path))
+        copy.append(t)
+        copy.append(d)
+        header.append(copy)
+
+        chip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        chip.add_css_class("path-chip")
+        chip.set_valign(Gtk.Align.CENTER)
+        is_path = bool(path) and (
+            str(path).startswith("/") or str(path).startswith("~"))
+        if is_path:
+            chip_icon = Gtk.Image.new_from_icon_name("document-open-symbolic")
+            chip_icon.set_pixel_size(12)
+            chip.append(chip_icon)
+        shown_path = display_path(path)
+        p = Gtk.Label(label=shown_path)
         p.add_css_class("page-path")
         p.set_xalign(0)
-        header.append(t)
-        header.append(d)
-        header.append(p)
+        p.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+        p.set_max_width_chars(34)
+        p.set_tooltip_text(shortpath(path))
+        chip.append(p)
+        header.append(chip)
+
         if not isinstance(child, Gtk.ScrolledWindow):
             sc = Gtk.ScrolledWindow()
             sc.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -2920,251 +3313,728 @@ class App(Gtk.Application):
         child.set_hexpand(True)
         child.set_vexpand(True)
         page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        page.add_css_class("page-body")
         page.append(header)
         page.append(child)
         return page
 
     def _install_css(self):
+        tokens = material_tokens()
+        css_text = r"""
+        /* Material 3-inspired tokens, seeded by Mango's live focus color. */
+        window.app-window {
+            background-color: @{surface};
+            color: @{on_surface};
+            font-family: "Inter", "Cantarell", sans-serif;
+        }
+        .page-body, scrolledwindow, viewport, stack {
+            background-color: @{surface};
+        }
+        popover, tooltip {
+            font-family: "Inter", "Cantarell", sans-serif;
+        }
+
+        /* ---- app bar ---- */
+        .app-bar {
+            background-color: @{surface_low};
+            border-bottom: 1px solid @{outline_variant};
+            min-height: 60px;
+            padding: 0 14px;
+        }
+        .app-brand { padding: 6px 0; }
+        .app-title {
+            font-size: 15px;
+            font-weight: 700;
+            color: @{on_surface};
+            letter-spacing: -0.1px;
+        }
+        .app-subtitle {
+            font-size: 10.5px;
+            color: @{on_surface_variant};
+        }
+        .app-chip {
+            background-color: @{primary_12};
+            color: @{primary};
+            border: 1px solid @{primary_20};
+            border-radius: 999px;
+            padding: 3px 10px;
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+        .version-chip {
+            background-color: @{surface_high};
+            color: @{on_surface_variant};
+            border: 1px solid @{outline_variant};
+            border-radius: 999px;
+            padding: 3px 9px;
+            font-size: 10.5px;
+            font-weight: 600;
+        }
+        windowcontrols button {
+            background: transparent;
+            color: @{on_surface_variant};
+            border-radius: 999px;
+            min-width: 26px;
+            min-height: 26px;
+            padding: 2px;
+        }
+        windowcontrols button:hover { background-color: @{on_surface_10}; }
+
+        /* ---- navigation drawer ---- */
+        .sidebar {
+            background-color: @{surface_low};
+            border-right: 1px solid @{outline_variant};
+        }
+        .nav-sidebar { background: transparent; padding: 4px 8px 8px 8px; }
+        .nav-search {
+            margin: 10px 10px 4px 10px;
+            min-height: 36px;
+            border-radius: 999px;
+            background-color: @{surface_highest};
+        }
+        .nav-sidebar row {
+            border-radius: 999px;
+            padding: 9px 12px;
+            margin: 1px 0;
+        }
+        .nav-sidebar row:hover { background-color: @{on_surface_06}; }
+        .nav-sidebar row:selected { background-color: @{primary_container}; }
+        .nav-sidebar row:selected .nav-label {
+            color: @{on_primary_container};
+            font-weight: 700;
+        }
+        .nav-sidebar row:selected .nav-icon { color: @{primary}; }
+        .nav-label {
+            font-size: 13px;
+            font-weight: 500;
+            color: @{on_surface_variant};
+        }
+        .nav-icon { color: @{on_surface_variant}; }
+        .nav-cat-row {
+            padding: 0;
+            margin: 0;
+            background: transparent;
+        }
+        .nav-cat-row:hover { background: transparent; }
+        .nav-cat {
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: 1.1px;
+            color: @{on_surface_muted};
+            margin: 14px 12px 3px 12px;
+        }
+        .sidebar-footer {
+            border-top: 1px solid @{outline_variant};
+            padding: 10px;
+        }
+        .sidebar-footer button {
+            background: transparent;
+            color: @{on_surface_variant};
+            border-radius: 12px;
+            min-height: 36px;
+            padding: 4px 10px;
+            font-weight: 500;
+        }
+        .sidebar-footer button:hover { background-color: @{on_surface_06}; }
+
+        /* ---- page header ---- */
+        .page-header {
+            padding: 18px 22px 12px 22px;
+            background-color: @{surface};
+        }
+        .page-icon {
+            background-color: @{primary_container};
+            color: @{on_primary_container};
+            border-radius: 14px;
+            min-width: 46px;
+            min-height: 46px;
+        }
+        .page-title {
+            font-size: 23px;
+            font-weight: 700;
+            color: @{on_surface};
+            letter-spacing: -0.3px;
+        }
+        .page-subtitle {
+            font-size: 12.5px;
+            color: @{on_surface_variant};
+        }
+        .path-chip {
+            background-color: @{surface_container};
+            border: 1px solid @{outline_variant};
+            border-radius: 999px;
+            padding: 4px 10px;
+            color: @{on_surface_variant};
+        }
+        .page-path {
+            font-family: "JetBrainsMono NF", "Source Code Pro", monospace;
+            font-size: 10.5px;
+            color: @{on_surface_variant};
+        }
+
+        /* ---- filled cards ---- */
+        .section-card {
+            background-color: @{surface_container};
+            border: 1px solid @{outline_variant};
+            border-radius: 18px;
+            padding: 10px 14px 12px 14px;
+            margin: 7px 16px 5px 16px;
+        }
+        .section-head { padding: 1px 2px 8px 2px; }
+        .section-accent {
+            background-color: @{primary};
+            border-radius: 999px;
+            min-width: 3px;
+            min-height: 15px;
+        }
+        .section-title {
+            font-size: 14.5px;
+            font-weight: 700;
+            color: @{on_surface};
+        }
+        .section-subtitle {
+            font-size: 11.5px;
+            color: @{on_surface_variant};
+        }
+        .set-row {
+            min-height: 40px;
+            padding: 3px 8px;
+            border-radius: 12px;
+        }
+        .set-row:hover { background-color: @{on_surface_06}; }
+        .set-row-label {
+            font-size: 13.5px;
+            font-weight: 500;
+            color: @{on_surface};
+        }
+        .set-row-desc {
+            font-size: 11.5px;
+            color: @{on_surface_variant};
+        }
+
+        /* ---- inputs ---- */
+        entry, spinbutton {
+            background-color: @{surface_highest};
+            border: 1px solid @{outline_variant};
+            border-radius: 10px;
+            min-height: 32px;
+            padding: 2px 10px;
+            color: @{on_surface};
+        }
+        entry:focus-within, spinbutton:focus-within {
+            border-color: @{primary};
+            box-shadow: 0 0 0 2px @{primary_24};
+        }
+        spinbutton button {
+            background: transparent;
+            color: @{on_surface_variant};
+            border: none;
+            border-radius: 7px;
+            min-width: 24px;
+            min-height: 22px;
+            padding: 0;
+            box-shadow: none;
+        }
+        spinbutton button:hover { background-color: @{on_surface_10}; }
+        dropdown {
+            background-color: @{surface_highest};
+            border: 1px solid @{outline_variant};
+            border-radius: 10px;
+            min-height: 34px;
+            padding: 0 5px 0 10px;
+        }
+        dropdown:hover { border-color: @{outline}; }
+        dropdown button {
+            background: transparent;
+            color: @{on_surface};
+            border: none;
+            border-radius: 8px;
+            min-height: 28px;
+            padding: 2px 4px;
+            box-shadow: none;
+            font-weight: 500;
+        }
+        dropdown button:hover { background-color: @{on_surface_06}; }
+
+        /* ---- buttons ---- */
+        button {
+            background-color: @{secondary_container};
+            color: @{on_secondary_container};
+            border: 1px solid transparent;
+            border-radius: 999px;
+            min-height: 30px;
+            padding: 3px 14px;
+            font-weight: 600;
+            box-shadow: none;
+        }
+        button:hover { background-color: @{secondary_hover}; }
+        button:active { background-color: @{secondary_active}; }
+        button.flat {
+            background: transparent;
+            color: @{on_surface_variant};
+            border-color: transparent;
+        }
+        button.flat:hover { background-color: @{on_surface_08}; }
+        button.suggested-action {
+            background-color: @{primary};
+            color: @{on_primary};
+            box-shadow: 0 2px 8px @{primary_32};
+        }
+        button.suggested-action:hover { background-color: @{primary_hover}; }
+        button.suggested-action:active { background-color: @{primary_active}; }
+        button:disabled { opacity: 0.45; }
+
+        switch {
+            background-color: @{surface_variant};
+            border: 1px solid @{outline_variant};
+            border-radius: 999px;
+            min-width: 44px;
+            min-height: 24px;
+        }
+        switch:checked {
+            background-color: @{primary};
+            border-color: @{primary};
+        }
+        switch > slider {
+            background-color: @{white};
+            border-radius: 999px;
+            min-width: 18px;
+            min-height: 18px;
+            margin: 2px;
+            box-shadow: 0 1px 3px @{black_35};
+        }
+
+        checkbutton {
+            background-color: @{surface_high};
+            border: 1px solid @{outline_variant};
+            border-radius: 999px;
+            padding: 3px 10px;
+            min-height: 28px;
+            color: @{on_surface_variant};
+            font-size: 12px;
+            font-weight: 600;
+        }
+        checkbutton:hover { background-color: @{surface_highest}; }
+        checkbutton:checked {
+            background-color: @{primary_container};
+            border-color: @{primary_48};
+            color: @{on_primary_container};
+        }
+        checkbutton > check {
+            background-color: @{surface_highest};
+            border: 1px solid @{outline};
+            border-radius: 5px;
+            min-width: 14px;
+            min-height: 14px;
+        }
+        checkbutton:checked > check {
+            background-color: @{primary};
+            border-color: @{primary};
+            color: @{on_primary};
+        }
+
+        scale trough {
+            background-color: @{surface_highest};
+            border-radius: 999px;
+            min-height: 6px;
+        }
+        scale highlight { background-color: @{primary}; border-radius: 999px; }
+        scale slider {
+            background-color: @{primary};
+            border-radius: 999px;
+            min-width: 18px;
+            min-height: 18px;
+            box-shadow: 0 1px 4px @{black_35};
+        }
+
+        stackswitcher {
+            background-color: @{surface_high};
+            border: 1px solid @{outline_variant};
+            border-radius: 999px;
+            padding: 3px;
+        }
+        stackswitcher button {
+            background: transparent;
+            color: @{on_surface_variant};
+            min-height: 28px;
+            padding: 3px 14px;
+            font-weight: 600;
+        }
+        stackswitcher button:checked {
+            background-color: @{primary};
+            color: @{on_primary};
+        }
+
+        scrollbar { background: transparent; }
+        scrollbar trough { background: transparent; }
+        scrollbar slider {
+            background-color: @{on_surface_24};
+            border-radius: 999px;
+            min-width: 6px;
+            min-height: 32px;
+            margin: 2px;
+        }
+        scrollbar slider:hover { background-color: @{on_surface_40}; }
+
+        separator {
+            background-color: @{outline_variant};
+            min-width: 1px;
+            min-height: 1px;
+        }
+        .dim-label { color: @{on_surface_variant}; opacity: 1; }
+        .mono-raw {
+            font-family: "JetBrainsMono NF", "Source Code Pro", monospace;
+            font-size: 11.5px;
+            color: @{on_surface_variant};
+        }
+        .error-text { color: @{error}; }
+        link { color: @{primary}; }
+
+        /* ---- action bar ---- */
+        .action-bar {
+            background-color: @{surface_low};
+            border-top: 1px solid @{outline_variant};
+            padding: 10px 16px;
+        }
+        .status-label {
+            font-size: 12.5px;
+            color: @{on_surface_variant};
+        }
+        .status-label.destructive-action { color: @{error}; }
+        .status-label.status-success { color: @{success}; }
+
+        /* ---- empty states ---- */
+        .empty-state {
+            background-color: @{surface_container_low};
+            border: 1px dashed @{outline_48};
+            border-radius: 18px;
+            padding: 22px;
+        }
+        .empty-icon { color: @{primary}; }
+
+        /* ---- keybinds ---- */
+        .bind-row {
+            background-color: @{surface_high};
+            border: 1px solid @{outline_variant};
+            border-radius: 12px;
+            padding: 3px 8px;
+        }
+        .bind-row:hover { background-color: @{surface_highest}; }
+        .bind-row button { min-height: 22px; padding: 1px 8px; }
+        .bind-combo { font-weight: 600; color: @{on_surface}; }
+        .kb-cat {
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            color: @{on_surface_muted};
+            margin: 16px 2px 4px 2px;
+        }
+        .kb-group > title {
+            font-size: 13.5px;
+            font-weight: 700;
+            padding: 7px 2px;
+        }
+        .kb-row { padding: 7px 10px; border-radius: 12px; }
+        .kb-row:hover { background-color: @{on_surface_06}; }
+        .kb-row button {
+            min-height: 26px;
+            padding: 2px 8px;
+            background: transparent;
+            color: @{on_surface_variant};
+        }
+        .kb-row button:hover { background-color: @{on_surface_08}; }
+        .kb-bind-group {
+            background-color: @{surface_container};
+            border: 1px solid @{outline_variant};
+            border-radius: 14px;
+        }
+        .kb-bind-group:hover { background-color: @{surface_high}; }
+        .kb-action { color: @{on_surface_variant}; }
+        .kb-count {
+            background-color: @{primary_12};
+            color: @{primary};
+            border-radius: 999px;
+            padding: 1px 8px;
+            font-size: 10.5px;
+            font-weight: 600;
+        }
+        .kb-shortcut { padding: 2px 0; }
+        .keycap {
+            background-color: @{surface_highest};
+            border: 1px solid @{outline_variant};
+            border-radius: 7px;
+            padding: 2px 8px;
+            font-weight: 700;
+            font-size: 12px;
+        }
+        .kbmap {
+            background-color: @{surface_lowest};
+            border: 1px solid @{outline_variant};
+            border-radius: 16px;
+            padding: 10px;
+        }
+        .kbmap-title { font-weight: 700; font-size: 13px; }
+        .kbmap-key {
+            min-height: 30px;
+            min-width: 28px;
+            padding: 0 3px;
+            border-radius: 8px;
+            font-size: 11px;
+            font-weight: 600;
+            background-color: @{surface_high};
+            border: 1px solid @{outline_variant};
+            color: @{on_surface_variant};
+            box-shadow: none;
+        }
+        .kbmap-key:hover { background-color: @{surface_highest}; }
+        .kbmap-key.bound {
+            background-color: @{primary_16};
+            border-color: @{primary_32};
+            color: @{on_surface};
+        }
+        .kbmap-key:checked {
+            background-color: @{primary};
+            border-color: @{primary};
+            color: @{on_primary};
+        }
+        .kbmap-mod { font-weight: 800; }
+        .xkb-picker { min-width: 240px; }
+        .xkb-picker label { font-weight: 600; }
+        .xkb-layout-list { padding: 2px; }
+        .xkb-layout-list row { border-radius: 10px; padding: 5px 8px; }
+        .xkb-layout-list row:hover { background-color: @{on_surface_08}; }
+        .xkb-layout-selected { background-color: @{primary_16}; }
+
+        /* ---- colors ---- */
+        .color-card {
+            background-color: @{surface_container};
+            border: 1px solid @{outline_variant};
+            border-radius: 14px;
+            padding: 10px;
+        }
+        .color-card:hover { border-color: @{primary_40}; }
+        .color-swatch { min-height: 50px; border-radius: 11px; }
+        .color-name {
+            font-weight: 700;
+            font-size: 12.5px;
+            color: @{on_surface};
+        }
+        .color-hex {
+            font-family: "JetBrainsMono NF", "Source Code Pro", monospace;
+            font-size: 10.5px;
+            color: @{on_surface_variant};
+        }
+        .color-group {
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            color: @{on_surface_muted};
+            margin: 12px 2px 2px 2px;
+        }
+
+        /* ---- wallpaper ---- */
+        .wall-list {
+            background-color: @{surface_container_low};
+            border: 1px solid @{outline_variant};
+            border-radius: 14px;
+            padding: 4px;
+        }
+        .wall-list row { border-radius: 10px; padding: 5px 8px; }
+        .wall-list row:hover { background-color: @{on_surface_06}; }
+        .wall-list row:selected {
+            background-color: @{primary_container};
+            color: @{on_primary_container};
+        }
+        .wall-preview {
+            background-color: @{surface_container};
+            border: 1px solid @{outline_variant};
+            border-radius: 14px;
+            padding: 10px;
+        }
+
+        /* ---- window rules ---- */
+        .wr-card {
+            background-color: @{surface_container};
+            border: 1px solid @{outline_variant};
+            border-radius: 14px;
+            padding: 5px 9px;
+        }
+        .wr-card:hover { border-color: @{outline}; }
+        .wr-help {
+            background-color: @{primary_08};
+            border: 1px solid @{primary_24};
+            border-radius: 14px;
+            padding: 6px 10px;
+        }
+        .wr-key {
+            font-family: "JetBrainsMono NF", "Source Code Pro", monospace;
+            font-size: 10.5px;
+            font-weight: 700;
+            color: @{primary};
+        }
+        .wr-section-label {
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            color: @{on_surface_muted};
+            margin-top: 2px;
+        }
+
+        /* ---- banners ---- */
+        .warn-banner {
+            background-color: @{warning_container};
+            color: @{on_warning_container};
+            border: 1px solid @{warning_40};
+            border-radius: 14px;
+            padding: 10px 14px;
+            margin: 10px 16px;
+        }
+        .guard-window {
+            background-color: @{surface_container};
+            border: 1px solid @{outline_variant};
+            border-radius: 18px;
+        }
+        .guard-count {
+            font-size: 3.2em;
+            font-weight: 700;
+            color: @{primary};
+        }
+        .guard-banner {
+            background-color: @{warning_container};
+            color: @{on_warning_container};
+            border: 1px solid @{warning_40};
+            border-radius: 14px;
+            padding: 8px 12px;
+            margin: 10px 16px 0 16px;
+        }
+
+        /* ---- bars, presets, tiling ---- */
+        .bar-card {
+            background-color: @{surface_container};
+            border: 1px solid @{outline_variant};
+            border-radius: 16px;
+            padding: 11px 13px;
+        }
+        .bar-title {
+            font-weight: 700;
+            font-size: 13.5px;
+            color: @{on_surface};
+        }
+        .bar-state {
+            font-size: 10.5px;
+            font-weight: 700;
+            border-radius: 999px;
+            padding: 2px 9px;
+            background-color: @{surface_high};
+            color: @{on_surface_variant};
+        }
+        .bar-state.on {
+            background-color: @{success_container};
+            color: @{success};
+        }
+        .bar-state.off { color: @{on_surface_muted}; }
+        .bar-path {
+            font-family: "JetBrainsMono NF", "Source Code Pro", monospace;
+            font-size: 10.5px;
+            color: @{on_surface_muted};
+        }
+        .preset-card {
+            background-color: @{surface_container};
+            border: 1px solid @{outline_variant};
+            border-radius: 16px;
+            padding: 12px;
+        }
+        .preset-card:hover {
+            border-color: @{primary_40};
+            background-color: @{surface_high};
+        }
+        .monitor-card {
+            background-color: @{surface_container};
+            border: 1px solid @{outline_variant};
+            border-radius: 14px;
+            padding: 8px 10px;
+        }
+        .monitor-card.selected-monitor {
+            border-color: @{primary_48};
+            background-color: @{primary_12};
+        }
+        .layout-symbol {
+            font-family: "JetBrainsMono NF", "Source Code Pro", monospace;
+            font-weight: 800;
+            background-color: @{primary_container};
+            color: @{on_primary_container};
+            border-radius: 9px;
+            padding: 2px 9px;
+            min-width: 30px;
+        }
+        .tag-chip {
+            font-size: 10.5px;
+            font-weight: 700;
+            border-radius: 7px;
+            padding: 2px 7px;
+            background-color: @{surface_high};
+            color: @{on_surface_variant};
+        }
+        .tag-chip.occupied { color: @{on_surface}; }
+        .tag-chip.active {
+            background-color: @{primary};
+            color: @{on_primary};
+        }
+        .layout-card {
+            background-color: @{surface_container};
+            border: 1px solid @{outline_variant};
+            border-radius: 16px;
+            padding: 8px 10px;
+            min-height: 44px;
+        }
+        .layout-card:hover {
+            background-color: @{surface_high};
+            border-color: @{primary_40};
+        }
+        .layout-card.current {
+            border-color: @{success_48};
+            background-color: @{success_container};
+        }
+
+        /* ---- popovers, menus, expanders ---- */
+        popover > contents {
+            background-color: @{surface_high};
+            color: @{on_surface};
+            border: 1px solid @{outline_variant};
+            border-radius: 14px;
+            box-shadow: 0 10px 28px @{black_48};
+            padding: 6px;
+        }
+        popover listview row { border-radius: 9px; padding: 5px 8px; }
+        popover listview row:hover { background-color: @{surface_highest}; }
+        popover listview row:selected {
+            background-color: @{primary_container};
+            color: @{on_primary_container};
+        }
+        menu {
+            background-color: @{surface_high};
+            color: @{on_surface};
+        }
+        tooltip.background {
+            background-color: @{surface_highest};
+            color: @{on_surface};
+            border-radius: 8px;
+        }
+        expander {
+            background-color: @{surface_container_low};
+            border: 1px solid @{outline_variant};
+            border-radius: 16px;
+            margin: 7px 16px 5px 16px;
+            padding: 8px 12px;
+        }
+        expander > title { font-weight: 600; color: @{on_surface}; }
+        """
+        for key, value in tokens.items():
+            css_text = css_text.replace("@{%s}" % key, value)
         try:
             css = Gtk.CssProvider()
-            css.load_from_data(b"""
-            .bind-row {
-                background: alpha(currentColor, 0.05);
-                border-radius: 8px;
-                padding: 2px 8px;
-            }
-            .bind-row:hover { background: alpha(currentColor, 0.09); }
-            .bind-row button { min-height: 22px; padding: 1px 8px; }
-            .bind-combo { font-weight: 600; }
-            .kb-cat {
-                font-size: 1.02em;
-                font-weight: 800;
-                letter-spacing: 0.4px;
-                margin-top: 16px;
-                margin-bottom: 4px;
-                opacity: 0.9;
-            }
-            .kb-group > title { font-size: 1.04em; font-weight: 700; padding: 7px 2px; }
-            .kb-row { padding: 7px 10px; border-radius: 9px; }
-            .kb-row:hover { background: alpha(currentColor, 0.06); }
-            .kb-row button { min-height: 26px; padding: 2px 6px; }
-            .kb-bind-group { background: alpha(currentColor, 0.035); }
-            .kb-bind-group:hover { background: alpha(currentColor, 0.06); }
-            .kb-action { opacity: 0.85; }
-            .kb-count {
-                background: alpha(currentColor, 0.09);
-                border-radius: 999px;
-                padding: 1px 8px;
-                font-size: 0.78em;
-                opacity: 0.75;
-            }
-            .kb-shortcut { padding: 2px 0; }
-            .keycap {
-                background: alpha(currentColor, 0.10);
-                border-radius: 6px;
-                padding: 2px 8px;
-                font-weight: 700;
-                font-size: 0.95em;
-            }
-            .kbmap {
-                background: alpha(currentColor, 0.035);
-                border: 1px solid alpha(currentColor, 0.08);
-                border-radius: 12px;
-                padding: 8px;
-            }
-            .kbmap-title { font-weight: 800; font-size: 1.02em; }
-            .kbmap-key {
-                min-height: 30px;
-                min-width: 28px;
-                padding: 0 3px;
-                border-radius: 6px;
-                font-size: 0.74em;
-                font-weight: 600;
-                background: alpha(currentColor, 0.055);
-                border: 1px solid alpha(currentColor, 0.06);
-                box-shadow: none;
-            }
-            .kbmap-key:hover { background: alpha(currentColor, 0.12); }
-            .kbmap-key.bound {
-                background: alpha(#5aa7ff, 0.18);
-                border-color: alpha(#5aa7ff, 0.38);
-            }
-            .kbmap-key:checked {
-                background: alpha(#5aa7ff, 0.85);
-                border-color: alpha(#5aa7ff, 0.95);
-                color: #ffffff;
-            }
-            .kbmap-mod { font-weight: 800; }
-            .xkb-picker { min-width: 240px; }
-            .xkb-picker label { font-weight: 600; }
-            .xkb-layout-list { padding: 2px; }
-            .xkb-layout-list row { border-radius: 6px; padding: 5px 8px; }
-            .xkb-layout-list row:hover { background: alpha(currentColor, 0.10); }
-            .xkb-layout-selected { background: alpha(#5aa7ff, 0.16); }
-            .color-card { padding: 2px; }
-            .color-swatch { min-height: 46px; border-radius: 10px; }
-            .color-name { font-weight: 700; font-size: 0.95em; }
-            .color-hex { font-family: monospace; font-size: 0.82em; opacity: 0.55; }
-            .color-group {
-                font-size: 0.78em;
-                font-weight: 800;
-                letter-spacing: 1px;
-                opacity: 0.55;
-                margin: 10px 2px 2px 2px;
-            }
-            .nav-sidebar { background: alpha(currentColor, 0.03); padding: 6px; }
-            .nav-sidebar row { border-radius: 9px; padding: 4px 8px; }
-            .nav-sidebar row:hover { background: alpha(currentColor, 0.07); }
-            .nav-sidebar row:selected { background: alpha(currentColor, 0.15); }
-            .nav-cat {
-                font-size: 0.76em;
-                font-weight: 800;
-                letter-spacing: 0.9px;
-                opacity: 0.55;
-                margin: 10px 6px 2px 6px;
-            }
-            .page-title { font-size: 1.4em; font-weight: 800; }
-            .page-path { font-family: monospace; font-size: 0.8em; opacity: 0.5; }
-            .mono-raw { font-family: monospace; font-size: 0.85em; opacity: 0.75; }
-            .wall-list {
-                background: alpha(currentColor, 0.03);
-                border-radius: 9px;
-                padding: 4px;
-            }
-            .wall-list row { border-radius: 7px; padding: 4px 8px; }
-            .wall-list row:hover { background: alpha(currentColor, 0.07); }
-            .wall-list row:selected { background: alpha(currentColor, 0.15); }
-            .wall-preview {
-                background: alpha(currentColor, 0.05);
-                border-radius: 10px;
-                padding: 8px;
-            }
-            .wr-card {
-                background: alpha(currentColor, 0.05);
-                border-radius: 9px;
-                padding: 2px 8px;
-            }
-            .wr-help {
-                background: alpha(#5aa7ff, 0.08);
-                border: 1px solid alpha(currentColor, 0.12);
-                border-radius: 9px;
-                padding: 2px 8px;
-            }
-            .wr-key {
-                font-family: monospace;
-                font-size: 0.84em;
-                font-weight: 700;
-                opacity: 0.85;
-            }
-            .wr-section-label {
-                font-size: 0.82em;
-                font-weight: 800;
-                letter-spacing: 0.5px;
-                opacity: 0.65;
-                margin-top: 2px;
-            }
-            .warn-banner {
-                background: alpha(#f5c211, 0.18);
-                border-radius: 8px;
-                padding: 8px 12px;
-                margin: 8px;
-            }
-            .guard-window {
-                background: @theme_bg_color;
-                border: 1px solid alpha(currentColor, 0.18);
-                border-radius: 12px;
-            }
-            .guard-count {
-                font-size: 3.2em;
-                font-weight: 800;
-            }
-            .guard-banner {
-                background: alpha(#f5c211, 0.16);
-                border: 1px solid alpha(#f5c211, 0.35);
-                border-radius: 8px;
-                padding: 6px 10px;
-                margin: 8px 8px 0 8px;
-            }
-            .bar-card {
-                background: alpha(currentColor, 0.045);
-                border: 1px solid alpha(currentColor, 0.10);
-                border-radius: 11px;
-                padding: 9px 11px;
-            }
-            .bar-title { font-weight: 800; }
-            .bar-state {
-                font-size: 0.78em;
-                font-weight: 800;
-                border-radius: 999px;
-                padding: 1px 8px;
-                background: alpha(currentColor, 0.08);
-            }
-            .bar-state.on {
-                background: alpha(#57e389, 0.20);
-                color: #57e389;
-            }
-            .bar-state.off { opacity: 0.62; }
-            .bar-path {
-                font-family: monospace;
-                font-size: 0.78em;
-                opacity: 0.62;
-            }
-            .error-text { color: #ff7b72; }
-            .preset-card {
-                background: alpha(currentColor, 0.045);
-                border: 1px solid alpha(currentColor, 0.10);
-                border-radius: 11px;
-                padding: 9px;
-            }
-            .preset-card:hover { border-color: alpha(#5aa7ff, 0.45); }
-            .monitor-card {
-                background: alpha(currentColor, 0.035);
-                border: 1px solid alpha(currentColor, 0.08);
-                border-radius: 9px;
-                padding: 7px 9px;
-            }
-            .monitor-card.selected-monitor {
-                border-color: alpha(#5aa7ff, 0.55);
-                background: alpha(#5aa7ff, 0.08);
-            }
-            .layout-symbol {
-                font-family: monospace;
-                font-weight: 800;
-                background: alpha(#5aa7ff, 0.15);
-                border-radius: 8px;
-                padding: 0 8px;
-                min-width: 30px;
-            }
-            .tag-chip {
-                font-size: 0.78em;
-                font-weight: 700;
-                border-radius: 6px;
-                padding: 1px 6px;
-                background: alpha(currentColor, 0.06);
-                opacity: 0.62;
-            }
-            .tag-chip.occupied { opacity: 0.85; }
-            .tag-chip.active {
-                background: alpha(#5aa7ff, 0.82);
-                color: #ffffff;
-                opacity: 1;
-            }
-            .layout-card {
-                background: alpha(currentColor, 0.04);
-                border: 1px solid alpha(currentColor, 0.10);
-                border-radius: 10px;
-                padding: 7px 9px;
-                min-height: 42px;
-            }
-            .layout-card:hover {
-                background: alpha(currentColor, 0.08);
-                border-color: alpha(#5aa7ff, 0.40);
-            }
-            .layout-card.current {
-                border-color: alpha(#57e389, 0.75);
-                background: alpha(#57e389, 0.10);
-            }
-            """)
+            css.load_from_data(css_text.encode("utf-8"))
             disp = Gdk.Display.get_default()
             if disp is not None:
                 Gtk.StyleContext.add_provider_for_display(
@@ -4322,14 +5192,14 @@ class App(Gtk.Application):
         self.keyboard_variant = variant
         self.field(variant, "str", target, "xkb_rules_variant", add_missing=True)
         self.controls[-1]["initial"] = get_simple(lines, "xkb_rules_variant", "") or ""
-        layout_section.add_row("Variant", variant)
+        layout_section.add_row("Variant", variant, expand=True)
 
         xkb_options = self._entry(get_simple(lines, "xkb_rules_options", "") or "")
         xkb_options.set_placeholder_text("optional, e.g. grp:alt_shift_toggle")
         self.keyboard_options = xkb_options
         self.field(xkb_options, "str", target, "xkb_rules_options", add_missing=True)
         self.controls[-1]["initial"] = get_simple(lines, "xkb_rules_options", "") or ""
-        layout_section.add_row("Options", xkb_options)
+        layout_section.add_row("Options", xkb_options, expand=True)
         box.append(layout_section)
 
         live_section = Section("Active session")
@@ -4545,7 +5415,7 @@ class App(Gtk.Application):
         add_btn = Gtk.Button(label="+ Add monitor rule")
         add_btn.connect("clicked", lambda _b: self.add_output_rule())
 
-        note = Gtk.Label(label="name supports regex (^DP-2$). If a resolution doesn't change, tick Custom — many monitors don't advertise every mode. Use primary:1 for XWayland games.")
+        note = Gtk.Label(label="name supports regex (^DP-2$). Width and height only take effect when refresh is also set. If a resolution doesn't change, tick Custom — many monitors don't advertise every mode. Use primary:1 for XWayland games.")
         note.add_css_class("dim-label")
         note.set_wrap(True)
         note.set_xalign(0)
@@ -4563,7 +5433,7 @@ class App(Gtk.Application):
         self.out_rows = []
         self._clear_container(self.out_box)
         for raw in read_lines(OUTPUTS):
-            if raw.strip().startswith("monitor_rule="):
+            if _rule_value(raw, "monitor_rule") is not None:
                 self.add_output_rule(line=raw.strip())
         if not self.out_rows:
             self.add_output_rule()
@@ -4571,8 +5441,9 @@ class App(Gtk.Application):
     def add_output_rule(self, _b=None, line="", prefill=None):
         raw = (line or "").strip()
         kv = {}
-        if raw.startswith("monitor_rule="):
-            kv = parse_kv(raw[len("monitor_rule="):])
+        payload = _rule_value(raw, "monitor_rule")
+        if payload is not None:
+            kv = parse_kv(payload)
         if prefill:
             kv.update(prefill)
         known = {"name", "width", "height", "refresh", "x", "y", "scale", "rr", "vrr", "hdr", "primary", "disable", "custom"}
@@ -4688,13 +5559,17 @@ class App(Gtk.Application):
         name = e["name"].get_text().strip()
         if name:
             kv["name"] = name
-        for key in ("width", "height"):
-            v = int(e["spins"][key].get_value())
-            if v > 0 or key in present:
-                kv[key] = str(v)
+        # Mango rejects width/height unless refresh is set with them.
+        w = int(e["spins"]["width"].get_value())
+        h = int(e["spins"]["height"].get_value())
         refr = e["spins"]["refresh"].get_value()
-        if refr > 0 or "refresh" in present:
+        if w > 0 and h > 0 and refr > 0:
+            kv["width"] = str(w)
+            kv["height"] = str(h)
             kv["refresh"] = ("%.2f" % refr).rstrip("0").rstrip(".")
+        else:
+            for key in ("width", "height", "refresh"):
+                kv.pop(key, None)
         for key in ("x", "y"):
             v = int(e["spins"][key].get_value())
             if v != 0 or key in present:
@@ -5656,8 +6531,9 @@ class App(Gtk.Application):
     def add_wr_rule(self, _b=None, line=""):
         raw = (line or "").strip()
         kv = {}
-        if raw.startswith("window_rule="):
-            kv = parse_kv(raw[len("window_rule="):])
+        payload = _rule_value(raw, "window_rule")
+        if payload is not None:
+            kv = parse_kv(payload)
         extra = {k: v for k, v in kv.items() if k not in WR_MANAGED_KEYS}
         present = set(kv.keys())
 
@@ -5827,6 +6703,7 @@ class App(Gtk.Application):
         self.kb_search.set_hexpand(True)
         self.kb_search.connect("search-changed", lambda _e: self.filter_kb())
         self.kb_count = Gtk.Label(label="")
+        self.kb_count.add_css_class("kb-count")
         self.kb_count.add_css_class("dim-label")
         add_btn = Gtk.Button(label="+ Add bind")
         add_btn.connect("clicked", self.add_kb_row)
@@ -5984,7 +6861,7 @@ class App(Gtk.Application):
                 else:
                     btn.remove_css_class("bound")
 
-    BIND_RE = re.compile(r"^(bind[a-z]*)=(.*)$")
+    BIND_RE = re.compile(r"^(bind[a-z]*)\s*=\s*(.*)$")
     SECTION_RE = re.compile(r"^#\s*=+\s*(.+?)\s*=+$")
 
     # file section -> (top-level category, friendly name)
@@ -6525,8 +7402,8 @@ class App(Gtk.Application):
         self._clear_container(self.wr_box)
         lines = read_lines(WINDOWRULES)
         for line in lines:
-            if line.strip().startswith("window_rule="):
-                e = self.add_wr_rule(line=line.strip())
+            if _rule_value(line, "window_rule") is not None:
+                self.add_wr_rule(line=line.strip())
         if not self.wr_rows:
             self.add_wr_rule()
 
@@ -6541,6 +7418,7 @@ class App(Gtk.Application):
         self.load_all()
         self.status.set_label("Reloaded from disk.")
         self.status.remove_css_class("destructive-action")
+        self.status.remove_css_class("status-success")
 
     def _profile_paths(self):
         if PROFILE is not None:
@@ -6639,7 +7517,7 @@ class App(Gtk.Application):
             out_lines = []
             for raw in read_lines(OUTPUTS):
                 s = raw.strip()
-                if s.startswith("monitor_rule="):
+                if _rule_value(raw, "monitor_rule") is not None:
                     q = pool.get(s)
                     if not q:
                         continue
@@ -6672,7 +7550,7 @@ class App(Gtk.Application):
                     pool.setdefault(e["orig"], []).append(e)
             for raw in orig_rules:
                 s = raw.strip()
-                if s.startswith("window_rule="):
+                if _rule_value(raw, "window_rule") is not None:
                     if s in deleted:
                         continue
                     q = pool.get(s)
@@ -6754,6 +7632,7 @@ class App(Gtk.Application):
             self.load_all()
             self.status.set_label("Invalid — reverted: " + msg)
             self.status.add_css_class("destructive-action")
+            self.status.remove_css_class("status-success")
             return
         if self.no_reload:
             self.status.set_label("Applied — reload skipped.")
@@ -6762,6 +7641,7 @@ class App(Gtk.Application):
             self.status.set_label("Applied — Mango reloaded." if reloaded
                                   else "Applied. Reload Mango to see the changes.")
         self.status.remove_css_class("destructive-action")
+        self.status.add_css_class("status-success")
         if outputs_changed and old_outputs is not None:
             self._show_output_guard(old_outputs)
 
@@ -6796,9 +7676,11 @@ class App(Gtk.Application):
             self.load_output_rules()
             self.status.set_label("Display settings reverted — nothing changed.")
             self.status.add_css_class("destructive-action")
+            self.status.remove_css_class("status-success")
         else:
             self.status.set_label("Display settings kept.")
             self.status.remove_css_class("destructive-action")
+            self.status.add_css_class("status-success")
         self._guard_old = None
         self.guard_revealer.set_reveal_child(False)
         self.apply_btn.set_sensitive(True)

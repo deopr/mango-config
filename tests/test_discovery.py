@@ -61,6 +61,25 @@ check("keyboard map: rows have valid key widths",
       all(sum(span for _label, _token, span in row) in (13, 15)
           for row in mc.KB_MAIN_ROWS))
 
+
+class _BindParser:
+    BIND_RE = mc.App.BIND_RE
+
+
+bind_parser = _BindParser()
+check("bind parse: spaced equals",
+      mc.App._kb_parts(bind_parser, "bind = SUPER, Return, spawn, kitty")
+      == ("bind", "SUPER", "Return", "spawn", "kitty"))
+check("bind parse: compact equals",
+      mc.App._kb_parts(bind_parser, "bind=SUPER,e,spawn,firefox")
+      == ("bind", "SUPER", "e", "spawn", "firefox"))
+check("bind parse: spaced no args",
+      mc.App._kb_parts(bind_parser, "bind = SUPER, q, killclient,")
+      == ("bind", "SUPER", "q", "killclient", ""))
+check("bind parse: flag with spaced equals",
+      mc.App._kb_parts(bind_parser, "bindl = SUPER, x, spawn, lock")
+      == ("bindl", "SUPER", "x", "spawn", "lock"))
+
 with tempfile.TemporaryDirectory() as td:
     open(os.path.join(td, "config.toml"), "w").write("[general]\n")
     p, r = roles(td)
@@ -79,7 +98,7 @@ with tempfile.TemporaryDirectory() as td:
     check("missing optional source: inline layout wins", r["layout"] == "config.conf", str(r))
 
 out = subprocess.run([sys.executable, APP, "--version"], capture_output=True, text=True)
-check("CLI version", out.returncode == 0 and out.stdout.strip() == "mango-config 0.4.2",
+check("CLI version", out.returncode == 0 and out.stdout.strip() == "mango-config 0.5.0",
       out.stdout + out.stderr)
 out = subprocess.run([sys.executable, APP, "--help"], capture_output=True, text=True)
 check("CLI help", out.returncode == 0 and "--config-dir" in out.stdout and "--tab" in out.stdout)
@@ -138,7 +157,7 @@ class _DropdownStub:
         return self.selected
 
 
-def _rule_stub(scale=1.0, present_scale=False):
+def _rule_stub(scale=1.0, present_scale=False, refresh=60.0):
     keys = {"name", "width", "height", "refresh", "x", "y"}
     if present_scale:
         keys.add("scale")
@@ -146,7 +165,7 @@ def _rule_stub(scale=1.0, present_scale=False):
         "name": _EntryStub("HDMI-A-1"),
         "spins": {
             "width": _SpinStub(1920), "height": _SpinStub(1080),
-            "refresh": _SpinStub(60.0), "x": _SpinStub(0),
+            "refresh": _SpinStub(refresh), "x": _SpinStub(0),
             "y": _SpinStub(0), "scale": _SpinStub(scale),
         },
         "rr": _DropdownStub(),
@@ -161,10 +180,19 @@ check("monitor rule scale defaults to 1.0",
       mc._rule_number({}, "scale", 1.0) == 1.0
       and mc._rule_number({"scale": "0.5"}, "scale", 1.0) == 0.5
       and mc._rule_number({"scale": "bad"}, "scale", 1.0) == 1.0)
+check("rule parser accepts spaces around =",
+      mc._rule_value("monitor_rule = name:HDMI-A-1, width:1920", "monitor_rule")
+      == "name:HDMI-A-1, width:1920"
+      and mc._rule_value("window_rule = app_id:Steam", "window_rule")
+      == "app_id:Steam"
+      and mc._rule_value("# monitor_rule = name:DP-1", "monitor_rule") is None)
 line = mc.App._monitor_line(None, _rule_stub())
 check("monitor rule omits unset scale", "scale" not in line, line)
 line = mc.App._monitor_line(None, _rule_stub(scale=1.5, present_scale=True))
 check("monitor rule keeps explicit scale", "scale:1.5" in line, line)
+line = mc.App._monitor_line(None, _rule_stub(refresh=0))
+check("monitor rule drops resolution without refresh",
+      "width" not in line and "height" not in line and "refresh" not in line, line)
 
 sample_bar = """// keep this comment
 {

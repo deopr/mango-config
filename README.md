@@ -25,6 +25,10 @@ touch. Every Apply is validated and backed up.
 
 ## Features
 
+- **Material 3 interface** — the accent is generated from your live Mango
+  `focus_color`, and tonal surfaces follow the desktop's dark preference or
+  `MANGO_CONFIG_THEME=light|dark`. Pages are grouped into cards, the navigation
+  drawer is searchable, and each header shows the relevant config file.
 - **Bar** — manage mangobar and Waybar from one page. Both get a live
   running/stopped card, quick top-level settings (height, layer, position and
   margins), start/stop/restart buttons, and credited presets. Presets replace
